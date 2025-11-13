@@ -52,12 +52,13 @@ func TestAccUserResource(t *testing.T) {
 		func(req *http.Request) (*http.Response, error) {
 			// Parse the request body to update our mock state
 			var updateData map[string]interface{}
-			json.NewDecoder(req.Body).Decode(&updateData)
-			if ln, ok := updateData["last_name"].(string); ok {
-				userLastName = ln
-			}
-			if em, ok := updateData["email"].(string); ok {
-				userEmail = em
+			if err := json.NewDecoder(req.Body).Decode(&updateData); err == nil {
+				if ln, ok := updateData["last_name"].(string); ok {
+					userLastName = ln
+				}
+				if em, ok := updateData["email"].(string); ok {
+					userEmail = em
+				}
 			}
 			return httpmock.NewStringResponse(200, `{}`), nil
 		})
