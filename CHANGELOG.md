@@ -1,3 +1,9 @@
+## 0.3.0 (TBD)
+
+FEATURES:
+* **New Resource**: `superset_user` - Manage Superset users
+* **New Data Source**: `superset_users` - Fetch users from Superset
+
 ## 0.2.0 (2025-08-29)
 
 FEATURES:

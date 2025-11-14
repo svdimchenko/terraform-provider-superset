@@ -1296,3 +1296,201 @@ func (c *Client) FindMetaDatabaseByName(databaseName string) (*MetaDatabase, err
 
 	return nil, nil // Not found
 }
+
+// User represents a user in the Superset application.
+type User struct {
+	ID        int64   `json:"id"`
+	Username  string  `json:"username"`
+	FirstName string  `json:"first_name"`
+	LastName  string  `json:"last_name"`
+	Email     string  `json:"email"`
+	Active    bool    `json:"active"`
+	Roles     []int64 `json:"roles,omitempty"`
+}
+
+// rawUserModel represents a raw user model in the Superset client.
+type rawUserModel struct {
+	ID        int64  `json:"id"`
+	Username  string `json:"username"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Email     string `json:"email"`
+	Active    bool   `json:"active"`
+	Roles     []struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	} `json:"roles"`
+}
+
+// FetchUsers fetches the users from the Superset API.
+// It sends a GET request to the "/api/v1/security/users/?q=(page_size:5000)" endpoint
+// and returns a slice of rawUserModel and an error.
+func (c *Client) FetchUsers() ([]rawUserModel, error) {
+	endpoint := "/api/v1/security/users/?q=(page_size:5000)"
+	resp, err := c.DoRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fetch users from Superset, status code: %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Users []rawUserModel `json:"result"`
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	if err != nil {
+		return nil, err
+	}
+
+	return result.Users, nil
+}
+
+// GetUser retrieves a user by its ID from the Superset API.
+// It sends a GET request to the "/api/v1/security/users/{id}" endpoint
+// and returns the user as a *User object if successful.
+// If there is an error during the request or response handling,
+// it returns nil and an error describing the issue.
+func (c *Client) GetUser(id int64) (*User, error) {
+	endpoint := fmt.Sprintf("/api/v1/security/users/%d", id)
+	resp, err := c.DoRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("error making GET request to %s: %v", endpoint, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to fetch user, status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading response body: %v", err)
+	}
+
+	var result struct {
+		ID     int64        `json:"id"`
+		Result rawUserModel `json:"result"`
+	}
+
+	err = json.Unmarshal(body, &result)
+	if err != nil {
+		return nil, fmt.Errorf("error unmarshalling response to struct: %v", err)
+	}
+
+	// Convert rawUserModel to User
+	user := &User{
+		ID:        result.Result.ID,
+		Username:  result.Result.Username,
+		FirstName: result.Result.FirstName,
+		LastName:  result.Result.LastName,
+		Email:     result.Result.Email,
+		Active:    result.Result.Active,
+		Roles:     make([]int64, len(result.Result.Roles)),
+	}
+
+	for i, role := range result.Result.Roles {
+		user.Roles[i] = role.ID
+	}
+
+	return user, nil
+}
+
+// CreateUser creates a user with the specified parameters in the Superset application.
+// It returns the ID of the created user and any error encountered.
+func (c *Client) CreateUser(username, firstName, lastName, email, password string, active bool, roles []int64) (int64, error) {
+	endpoint := "/api/v1/security/users/"
+	payload := map[string]interface{}{
+		"username":   username,
+		"first_name": firstName,
+		"last_name":  lastName,
+		"email":      email,
+		"password":   password,
+		"active":     active,
+		"roles":      roles,
+	}
+
+	resp, err := c.DoRequest("POST", endpoint, payload)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("failed to create user, status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+
+	var result map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	if err != nil {
+		return 0, err
+	}
+
+	id, ok := result["id"].(float64)
+	if !ok {
+		return 0, fmt.Errorf("failed to retrieve user ID from response")
+	}
+
+	return int64(id), nil
+}
+
+// UpdateUser updates the user with the specified ID.
+// If the user with the given ID does not exist, an error is returned.
+// The updated user data is sent to the Superset API using a PUT request.
+// If the update is successful, the function returns nil.
+// If the update fails, an error is returned with the corresponding status code and response body.
+func (c *Client) UpdateUser(id int64, username, firstName, lastName, email, password string, active bool, roles []int64) error {
+	endpoint := fmt.Sprintf("/api/v1/security/users/%d", id)
+	payload := map[string]interface{}{
+		"username":   username,
+		"first_name": firstName,
+		"last_name":  lastName,
+		"email":      email,
+		"active":     active,
+		"roles":      roles,
+	}
+
+	// Only include password if it's not empty
+	if password != "" {
+		payload["password"] = password
+	}
+
+	resp, err := c.DoRequest("PUT", endpoint, payload)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to update user, status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// DeleteUser deletes a user with the specified ID from the Superset server.
+// It sends a DELETE request to the Superset API endpoint for deleting users.
+// If the request is successful and the user is deleted, it returns nil.
+// If there is an error or the response status code is not 204 (No Content) or 200 (OK),
+// it returns an error with the corresponding status code and response body.
+func (c *Client) DeleteUser(id int64) error {
+	endpoint := fmt.Sprintf("/api/v1/security/users/%d", id)
+	resp, err := c.DoRequest("DELETE", endpoint, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to delete user, status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
