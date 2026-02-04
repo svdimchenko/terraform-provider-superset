@@ -39,6 +39,7 @@ type supersetProviderModel struct {
 	Host     types.String `tfsdk:"host"`
 	Username types.String `tfsdk:"username"`
 	Password types.String `tfsdk:"password"`
+	Provider types.String `tfsdk:"provider"`
 }
 
 // Metadata returns the provider type name.
@@ -64,6 +65,10 @@ func (p *supersetProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 				Description: "The password to authenticate with Superset. This value is sensitive and will not be displayed in logs or state files.",
 				Optional:    true,
 				Sensitive:   true,
+			},
+			"provider": schema.StringAttribute{
+				Description: "The authentication provider to use. Valid values are 'db' (database) or 'ldap'. Defaults to 'db'.",
+				Optional:    true,
 			},
 		},
 	}
@@ -117,6 +122,7 @@ func (p *supersetProvider) Configure(ctx context.Context, req provider.Configure
 	host := os.Getenv("SUPERSET_HOST")
 	username := os.Getenv("SUPERSET_USERNAME")
 	password := os.Getenv("SUPERSET_PASSWORD")
+	providerType := os.Getenv("SUPERSET_PROVIDER")
 
 	if !config.Host.IsNull() {
 		host = config.Host.ValueString()
@@ -128,6 +134,15 @@ func (p *supersetProvider) Configure(ctx context.Context, req provider.Configure
 
 	if !config.Password.IsNull() {
 		password = config.Password.ValueString()
+	}
+
+	if !config.Provider.IsNull() {
+		providerType = config.Provider.ValueString()
+	}
+
+	// Default to "db" if not specified
+	if providerType == "" {
+		providerType = "db"
 	}
 
 	// If any of the expected configurations are missing, return errors with provider-specific guidance.
@@ -175,7 +190,7 @@ func (p *supersetProvider) Configure(ctx context.Context, req provider.Configure
 	tflog.Debug(ctx, "Creating Superset client")
 
 	// Create a new Superset client using the configuration values
-	client, err := client.NewClient(host, username, password)
+	client, err := client.NewClient(host, username, password, providerType)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Unable to Create Superset API Client",

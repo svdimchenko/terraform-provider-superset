@@ -23,17 +23,19 @@ type Client struct {
 	Host     string
 	Username string
 	Password string
+	Provider string
 	Token    string
 	Cookies  []*http.Cookie
 }
 
-// NewClient creates a new Superset client with the specified host, username, and password.
+// NewClient creates a new Superset client with the specified host, username, password, and provider.
 // It returns a pointer to the created Client and an error if authentication fails.
-func NewClient(host, username, password string) (*Client, error) {
+func NewClient(host, username, password, provider string) (*Client, error) {
 	client := &Client{
 		Host:     host,
 		Username: username,
 		Password: password,
+		Provider: provider,
 	}
 
 	err := client.authenticate()
@@ -44,14 +46,14 @@ func NewClient(host, username, password string) (*Client, error) {
 	return client, nil
 }
 
-// authenticate sends an authentication request to the Superset API using the provided username and password.
+// authenticate sends an authentication request to the Superset API using the provided username, password, and provider.
 // It returns an error if the authentication fails or if there is an error during the request.
 func (c *Client) authenticate() error {
 	url := fmt.Sprintf("%s/api/v1/security/login", c.Host)
 	payload := map[string]string{
 		"username": c.Username,
 		"password": c.Password,
-		"provider": "db",
+		"provider": c.Provider,
 	}
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
