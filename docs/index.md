@@ -12,10 +12,57 @@ Superset provider for managing Superset resources.
 ## Example Usage
 
 ```terraform
+# Example: Using database authentication provider (default)
+provider "superset" {
+  host     = "https://domain.com" # Replace with your Superset instance URL
+  username = "admin"              # Replace with your database username
+  password = "admin_password"     # Replace with your database password
+  provider = "db"                 # Use database authentication (this is the default)
+}
+
+# Alternative: Omit provider field (defaults to "db")
+# provider "superset" {
+#   host     = "https://domain.com"
+#   username = "admin"
+#   password = "admin_password"
+# }
+
+# Alternative: Using environment variables
+# export SUPERSET_HOST="https://domain.com"
+# export SUPERSET_USERNAME="admin"
+# export SUPERSET_PASSWORD="admin_password"
+# export SUPERSET_PROVIDER="db"  # Optional, defaults to "db"
+#
+# provider "superset" {}
+```
+
+```terraform
+# Example: Using LDAP authentication provider
+provider "superset" {
+  host     = "https://domain.com" # Replace with your Superset instance URL
+  username = "ldap_user"          # Replace with your LDAP username
+  password = "ldap_password"      # Replace with your LDAP password
+  provider = "ldap"               # Use LDAP authentication
+}
+
+# Alternative: Using environment variables
+# export SUPERSET_HOST="https://domain.com"
+# export SUPERSET_USERNAME="ldap_user"
+# export SUPERSET_PASSWORD="ldap_password"
+# export SUPERSET_PROVIDER="ldap"
+#
+# provider "superset" {}
+```
+
+```terraform
+# Basic provider configuration
+# See provider-db.tf and provider-ldap.tf for specific authentication examples
+
 provider "superset" {
   host     = "https://domain.com" # Replace with your Superset instance URL
   username = "username"           # Replace with your Superset username
   password = "password"           # Replace with your Superset password
+  provider = "db"                 # Authentication provider: "db" (default) or "ldap"
 }
 ```
 
@@ -26,4 +73,5 @@ provider "superset" {
 
 - `host` (String) The URL of the Superset instance. This should include the protocol (http or https) and the hostname or IP address. Example: 'https://superset.example.com'.
 - `password` (String, Sensitive) The password to authenticate with Superset. This value is sensitive and will not be displayed in logs or state files.
+- `provider` (String) The authentication provider to use. Valid values are 'db' (database) or 'ldap'. Defaults to 'db'.
 - `username` (String) The username to authenticate with Superset. This user should have the necessary permissions to manage resources within Superset.

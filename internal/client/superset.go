@@ -23,17 +23,19 @@ type Client struct {
 	Host     string
 	Username string
 	Password string
+	Provider string
 	Token    string
 	Cookies  []*http.Cookie
 }
 
-// NewClient creates a new Superset client with the specified host, username, and password.
+// NewClient creates a new Superset client with the specified host, username, password, and provider.
 // It returns a pointer to the created Client and an error if authentication fails.
-func NewClient(host, username, password string) (*Client, error) {
+func NewClient(host, username, password, provider string) (*Client, error) {
 	client := &Client{
 		Host:     host,
 		Username: username,
 		Password: password,
+		Provider: provider,
 	}
 
 	err := client.authenticate()
@@ -44,14 +46,14 @@ func NewClient(host, username, password string) (*Client, error) {
 	return client, nil
 }
 
-// authenticate sends an authentication request to the Superset API using the provided username and password.
+// authenticate sends an authentication request to the Superset API using the provided username, password, and provider.
 // It returns an error if the authentication fails or if there is an error during the request.
 func (c *Client) authenticate() error {
 	url := fmt.Sprintf("%s/api/v1/security/login", c.Host)
 	payload := map[string]string{
 		"username": c.Username,
 		"password": c.Password,
-		"provider": "db",
+		"provider": c.Provider,
 	}
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
@@ -262,49 +264,78 @@ func (c *Client) GetRolePermissions(roleID int64) ([]Permission, error) {
 // - A slice of int64 IDs that match the provided permissions.
 // - An error if the request fails or the decoding of the response fails.
 func (c *Client) GetPermissionViewMenuIDs(permissions []map[string]string) ([]int64, error) {
-	url := fmt.Sprintf("%s/api/v1/security/permissions-resources/?q=(page_size:5000)", c.Host)
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to fetch permissions resources from Superset, status code: %d", resp.StatusCode)
-	}
-
-	var result struct {
-		Resources []struct {
-			ID         int64 `json:"id"`
-			Permission struct {
-				Name string `json:"name"`
-			} `json:"permission"`
-			ViewMenu struct {
-				Name string `json:"name"`
-			} `json:"view_menu"`
-		} `json:"result"`
-	}
-	err = json.NewDecoder(resp.Body).Decode(&result)
-	if err != nil {
-		return nil, err
-	}
-
+	page := 0
+	pageSize := 100
 	var ids []int64
+	found := make(map[string]bool)
+
 	for _, perm := range permissions {
-		for _, res := range result.Resources {
-			if res.Permission.Name == perm["permission"] && res.ViewMenu.Name == perm["view_menu"] {
-				ids = append(ids, res.ID)
+		key := perm["permission"] + "|" + perm["view_menu"]
+		found[key] = false
+	}
+
+	for {
+		url := fmt.Sprintf("%s/api/v1/security/permissions-resources/?q=(page:%d,page_size:%d)", c.Host, page, pageSize)
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("failed to fetch permissions resources from Superset, status code: %d", resp.StatusCode)
+		}
+
+		var result struct {
+			Resources []struct {
+				ID         int64 `json:"id"`
+				Permission struct {
+					Name string `json:"name"`
+				} `json:"permission"`
+				ViewMenu struct {
+					Name string `json:"name"`
+				} `json:"view_menu"`
+			} `json:"result"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, perm := range permissions {
+			key := perm["permission"] + "|" + perm["view_menu"]
+			if !found[key] {
+				for _, res := range result.Resources {
+					if res.Permission.Name == perm["permission"] && res.ViewMenu.Name == perm["view_menu"] {
+						ids = append(ids, res.ID)
+						found[key] = true
+						break
+					}
+				}
+			}
+		}
+
+		allFound := true
+		for _, v := range found {
+			if !v {
+				allFound = false
 				break
 			}
 		}
+
+		if allFound || len(result.Resources) < pageSize {
+			break
+		}
+		page++
 	}
+
 	return ids, nil
 }
 
@@ -463,38 +494,49 @@ func (c *Client) DeleteRole(id int64) error {
 // - int64: The ID of the permission resource if found.
 // - error: An error if the request fails or if the permission resource is not found.
 func (c *Client) GetPermissionIDByNameAndView(permissionName, viewMenuName string) (int64, error) {
-	endpoint := "/api/v1/security/permissions-resources?q=(page_size:5000)"
-	resp, err := c.DoRequest("GET", endpoint, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
+	page := 0
+	pageSize := 100
 
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("failed to fetch permissions resources from Superset, status code: %d", resp.StatusCode)
-	}
-
-	var result struct {
-		Resources []struct {
-			ID         int64 `json:"id"`
-			Permission struct {
-				Name string `json:"name"`
-			} `json:"permission"`
-			ViewMenu struct {
-				Name string `json:"name"`
-			} `json:"view_menu"`
-		} `json:"result"`
-	}
-
-	err = json.NewDecoder(resp.Body).Decode(&result)
-	if err != nil {
-		return 0, err
-	}
-
-	for _, resource := range result.Resources {
-		if resource.Permission.Name == permissionName && resource.ViewMenu.Name == viewMenuName {
-			return resource.ID, nil
+	for {
+		endpoint := fmt.Sprintf("/api/v1/security/permissions-resources?q=(page:%d,page_size:%d)", page, pageSize)
+		resp, err := c.DoRequest("GET", endpoint, nil)
+		if err != nil {
+			return 0, err
 		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return 0, fmt.Errorf("failed to fetch permissions resources from Superset, status code: %d", resp.StatusCode)
+		}
+
+		var result struct {
+			Resources []struct {
+				ID         int64 `json:"id"`
+				Permission struct {
+					Name string `json:"name"`
+				} `json:"permission"`
+				ViewMenu struct {
+					Name string `json:"name"`
+				} `json:"view_menu"`
+			} `json:"result"`
+			Count int `json:"count"`
+		}
+
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		if err != nil {
+			return 0, err
+		}
+
+		for _, resource := range result.Resources {
+			if resource.Permission.Name == permissionName && resource.ViewMenu.Name == viewMenuName {
+				return resource.ID, nil
+			}
+		}
+
+		if len(result.Resources) < pageSize {
+			break
+		}
+		page++
 	}
 
 	return 0, fmt.Errorf("permission %s with view menu %s not found", permissionName, viewMenuName)
