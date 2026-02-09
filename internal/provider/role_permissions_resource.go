@@ -200,8 +200,6 @@ func (r *rolePermissionsResource) Create(ctx context.Context, req resource.Creat
 
 // Read refreshes the Terraform state with the latest data.
 func (r *rolePermissionsResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	tflog.Debug(ctx, "Starting Read method")
-
 	// Get current state
 	var state rolePermissionsResourceModel
 	diags := req.State.Get(ctx, &state)
@@ -209,10 +207,6 @@ func (r *rolePermissionsResource) Read(ctx context.Context, req resource.ReadReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
-
-	tflog.Debug(ctx, "State obtained", map[string]interface{}{
-		"roleName": state.RoleName.ValueString(),
-	})
 
 	// Get role ID
 	roleID, err := r.client.GetRoleIDByName(state.RoleName.ValueString())
@@ -224,11 +218,7 @@ func (r *rolePermissionsResource) Read(ctx context.Context, req resource.ReadReq
 		return
 	}
 
-	tflog.Debug(ctx, "Role ID obtained", map[string]interface{}{
-		"roleID": roleID,
-	})
-
-	// Get permissions from Superset
+	// Get all permissions from Superset
 	permissions, err := r.client.GetRolePermissions(roleID)
 	if err != nil {
 		resp.Diagnostics.AddError(
@@ -238,78 +228,31 @@ func (r *rolePermissionsResource) Read(ctx context.Context, req resource.ReadReq
 		return
 	}
 
-	tflog.Debug(ctx, "Permissions fetched from Superset", map[string]interface{}{
-		"permissions": permissions,
-	})
-
-	// Map permissions to resource model
-	var resourcePermissions []resourcePermissionModel
+	// Create a map of existing permissions in Superset for quick lookup
+	permMap := make(map[string]int64)
 	for _, perm := range permissions {
-		tflog.Debug(ctx, "Processing fetched permission", map[string]interface{}{
-			"ID":         perm.ID,
-			"Permission": perm.PermissionName,
-			"ViewMenu":   perm.ViewMenuName,
-		})
+		key := fmt.Sprintf("%s|%s", perm.PermissionName, perm.ViewMenuName)
+		permMap[key] = perm.ID
+	}
 
-		// Create mapped permission
-		mappedPermission := resourcePermissionModel{
-			ID:         types.Int64Value(perm.ID),
-			Permission: types.StringValue(perm.PermissionName),
-			ViewMenu:   types.StringValue(perm.ViewMenuName),
+	// Verify each permission in state still exists and update IDs
+	var resourcePermissions []resourcePermissionModel
+	for _, statePerm := range state.ResourcePermissions {
+		key := fmt.Sprintf("%s|%s", statePerm.Permission.ValueString(), statePerm.ViewMenu.ValueString())
+		if permID, exists := permMap[key]; exists {
+			resourcePermissions = append(resourcePermissions, resourcePermissionModel{
+				ID:         types.Int64Value(permID),
+				Permission: statePerm.Permission,
+				ViewMenu:   statePerm.ViewMenu,
+			})
 		}
-
-		// Verify mapping immediately after setting the values
-		tflog.Debug(ctx, "Mapped Permission", map[string]interface{}{
-			"ID":         mappedPermission.ID.ValueInt64(),
-			"Permission": mappedPermission.Permission.ValueString(),
-			"ViewMenu":   mappedPermission.ViewMenu.ValueString(),
-		})
-
-		resourcePermissions = append(resourcePermissions, mappedPermission)
 	}
 
-	// Debug full content of resourcePermissions by converting to a slice of maps
-	var debugResourcePermissions []map[string]interface{}
-	for _, rp := range resourcePermissions {
-		debugResourcePermissions = append(debugResourcePermissions, map[string]interface{}{
-			"ID":         rp.ID.ValueInt64(),
-			"Permission": rp.Permission.ValueString(),
-			"ViewMenu":   rp.ViewMenu.ValueString(),
-		})
-	}
-
-	tflog.Debug(ctx, "Full content of resourcePermissions", map[string]interface{}{
-		"resourcePermissions": debugResourcePermissions,
-	})
-
-	// Verify the final mapped permissions
-	// sort.Slice(resourcePermissions, func(i, j int) bool {
-	// 	return resourcePermissions[i].ID.ValueInt64() < resourcePermissions[j].ID.ValueInt64()
-	// })
-
-	for _, rp := range resourcePermissions {
-		tflog.Debug(ctx, "Mapped Permission in List", map[string]interface{}{
-			"ID":         rp.ID.ValueInt64(),
-			"Permission": rp.Permission.ValueString(),
-			"ViewMenu":   rp.ViewMenu.ValueString(),
-		})
-	}
-
-	tflog.Debug(ctx, "Final Permissions mapped to resource model", map[string]interface{}{
-		"resourcePermissions": debugResourcePermissions,
-	})
-
-	// Overwrite state with refreshed values
+	// Update state with verified permissions
 	state.ResourcePermissions = resourcePermissions
-	state.LastUpdated = types.StringValue(time.Now().Format(time.RFC3339))
 
 	diags = resp.State.Set(ctx, &state)
 	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	tflog.Debug(ctx, "Read method completed successfully")
 }
 
 // Update updates the resource and sets the updated Terraform state on success.
