@@ -24,6 +24,7 @@ data "superset_databases" "example" {}
 - `databases` (Attributes List) List of databases. (see [below for nested schema](#nestedatt--databases))
 
 <a id="nestedatt--databases"></a>
+
 ### Nested Schema for `databases`
 
 Read-Only:

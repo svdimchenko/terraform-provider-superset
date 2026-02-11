@@ -30,6 +30,7 @@ data "superset_role_permissions" "all" {
 - `permissions` (Attributes List) List of permissions. (see [below for nested schema](#nestedatt--permissions))
 
 <a id="nestedatt--permissions"></a>
+
 ### Nested Schema for `permissions`
 
 Read-Only:

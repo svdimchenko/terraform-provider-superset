@@ -24,6 +24,7 @@ data "superset_roles" "all" {}
 - `roles` (Attributes List) List of roles. (see [below for nested schema](#nestedatt--roles))
 
 <a id="nestedatt--roles"></a>
+
 ### Nested Schema for `roles`
 
 Read-Only:

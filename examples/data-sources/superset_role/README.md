@@ -4,7 +4,8 @@ This example demonstrates how to fetch a role by name from Apache Superset using
 
 ## What is the Role Data Source?
 
-The `superset_role` data source allows you to look up a role by its name and retrieve its ID. This is useful when you need to reference roles in other resources without hardcoding role IDs.
+The `superset_role` data source allows you to look up a role by its name and retrieve its ID.
+This is useful when you need to reference roles in other resources without hardcoding role IDs.
 
 ## Basic Usage
 
@@ -81,14 +82,17 @@ resource "superset_row_level_security" "dynamic_filter" {
 ## Attributes
 
 ### Input
+
 - `name` (Required) - The name of the role to fetch
 
 ### Output
+
 - `id` (Computed) - The numeric identifier of the role
 
 ## Common Role Names
 
 Superset typically includes these default roles:
+
 - `Admin` - Full administrative access
 - `Alpha` - Can create and edit content
 - `Gamma` - Can view dashboards and charts

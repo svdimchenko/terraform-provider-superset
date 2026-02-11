@@ -24,6 +24,7 @@ data "superset_datasets" "example" {}
 - `datasets` (Attributes List) List of Superset datasets. (see [below for nested schema](#nestedatt--datasets))
 
 <a id="nestedatt--datasets"></a>
+
 ### Nested Schema for `datasets`
 
 Read-Only:
@@ -38,6 +39,7 @@ Read-Only:
 - `table_name` (String) Name of the table.
 
 <a id="nestedatt--datasets--owners"></a>
+
 ### Nested Schema for `datasets.owners`
 
 Read-Only:
