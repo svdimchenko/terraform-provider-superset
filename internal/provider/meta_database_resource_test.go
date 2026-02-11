@@ -16,7 +16,7 @@ func TestAccMetaDatabaseResource(t *testing.T) {
 	httpmock.Reset()
 
 	// Define responses that change based on request context
-	var currentState string = "initial"
+	var currentState = "initial"
 
 	// Mock the Superset API login response
 	httpmock.RegisterResponder("POST", "http://superset-host/api/v1/security/login",
