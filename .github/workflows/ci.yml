@@ -1,5 +1,5 @@
 # Terraform Provider testing workflow.
-name: Tests
+name: CI
 
 # This GitHub action runs your tests for each pull request and push.
 # Optionally, you can turn it on using a schedule for regular testing.
@@ -16,6 +16,12 @@ permissions:
   contents: read
 
 jobs:
+  prek:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: j178/prek-action@v1
+
   # Ensure project builds before running testing matrix
   build:
     name: Build
