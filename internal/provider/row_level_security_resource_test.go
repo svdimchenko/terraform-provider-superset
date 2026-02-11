@@ -13,6 +13,7 @@ func TestAccRowLevelSecurityResource(t *testing.T) {
 			{
 				Config: providerConfig + `
 resource "superset_row_level_security" "test" {
+  name        = "test_rls_rule"
   tables      = [1]
   clause      = "user_id = '{{ current_user_id() }}'"
   role_ids    = [1]
@@ -22,6 +23,7 @@ resource "superset_row_level_security" "test" {
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("superset_row_level_security.test", "name", "test_rls_rule"),
 					resource.TestCheckResourceAttr("superset_row_level_security.test", "clause", "user_id = '{{ current_user_id() }}'"),
 					resource.TestCheckResourceAttr("superset_row_level_security.test", "group_key", "test"),
 					resource.TestCheckResourceAttr("superset_row_level_security.test", "filter_type", "Regular"),
