@@ -1536,3 +1536,185 @@ func (c *Client) DeleteUser(id int64) error {
 
 	return nil
 }
+
+// RowLevelSecurity represents a row level security rule in Superset.
+type RowLevelSecurity struct {
+	ID          int64   `json:"id"`
+	Name        string  `json:"name"`
+	Tables      []int64 `json:"tables"`
+	Clause      string  `json:"clause"`
+	RoleIDs     []int64 `json:"roles"`
+	GroupKey    string  `json:"group_key"`
+	FilterType  string  `json:"filter_type"`
+	Description string  `json:"description"`
+}
+
+// CreateRowLevelSecurity creates a new RLS rule in Superset.
+func (c *Client) CreateRowLevelSecurity(name string, tables []int64, clause string, roleIDs []int64, groupKey, filterType, description string) (int64, error) {
+	csrfToken, cookies, err := c.GetCSRFToken()
+	if err != nil {
+		return 0, err
+	}
+
+	headers := map[string]string{
+		"X-CSRFToken": csrfToken,
+		"Referer":     c.Host,
+	}
+
+	endpoint := "/api/v1/rowlevelsecurity/"
+	payload := map[string]interface{}{
+		"name":        name,
+		"tables":      tables,
+		"clause":      clause,
+		"roles":       roleIDs,
+		"group_key":   groupKey,
+		"filter_type": filterType,
+		"description": description,
+	}
+
+	resp, err := c.DoRequestWithHeadersAndCookies("POST", endpoint, payload, headers, cookies)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("failed to create RLS rule, status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+
+	var result map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	if err != nil {
+		return 0, err
+	}
+
+	id, ok := result["id"].(float64)
+	if !ok {
+		return 0, fmt.Errorf("failed to retrieve RLS rule ID from response")
+	}
+
+	return int64(id), nil
+}
+
+// GetRowLevelSecurity retrieves an RLS rule by its ID.
+func (c *Client) GetRowLevelSecurity(id int64) (*RowLevelSecurity, error) {
+	endpoint := fmt.Sprintf("/api/v1/rowlevelsecurity/%d", id)
+	resp, err := c.DoRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to fetch RLS rule, status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Result struct {
+			ID          int64  `json:"id"`
+			Name        string `json:"name"`
+			Tables      []struct {
+				ID int64 `json:"id"`
+			} `json:"tables"`
+			Clause      string `json:"clause"`
+			GroupKey    string `json:"group_key"`
+			FilterType  string `json:"filter_type"`
+			Description string `json:"description"`
+			Roles       []struct {
+				ID int64 `json:"id"`
+			} `json:"roles"`
+		} `json:"result"`
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	if err != nil {
+		return nil, err
+	}
+
+	roleIDs := make([]int64, len(result.Result.Roles))
+	for i, role := range result.Result.Roles {
+		roleIDs[i] = role.ID
+	}
+
+	tableIDs := make([]int64, len(result.Result.Tables))
+	for i, table := range result.Result.Tables {
+		tableIDs[i] = table.ID
+	}
+
+	return &RowLevelSecurity{
+		ID:          result.Result.ID,
+		Name:        result.Result.Name,
+		Tables:      tableIDs,
+		Clause:      result.Result.Clause,
+		GroupKey:    result.Result.GroupKey,
+		FilterType:  result.Result.FilterType,
+		Description: result.Result.Description,
+		RoleIDs:     roleIDs,
+	}, nil
+}
+
+// UpdateRowLevelSecurity updates an existing RLS rule.
+func (c *Client) UpdateRowLevelSecurity(id int64, name string, tables []int64, clause string, roleIDs []int64, groupKey, filterType, description string) error {
+	csrfToken, cookies, err := c.GetCSRFToken()
+	if err != nil {
+		return err
+	}
+
+	headers := map[string]string{
+		"X-CSRFToken": csrfToken,
+		"Referer":     c.Host,
+	}
+
+	endpoint := fmt.Sprintf("/api/v1/rowlevelsecurity/%d", id)
+	payload := map[string]interface{}{
+		"name":        name,
+		"tables":      tables,
+		"clause":      clause,
+		"roles":       roleIDs,
+		"group_key":   groupKey,
+		"filter_type": filterType,
+		"description": description,
+	}
+
+	resp, err := c.DoRequestWithHeadersAndCookies("PUT", endpoint, payload, headers, cookies)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to update RLS rule, status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// DeleteRowLevelSecurity deletes an RLS rule by ID.
+func (c *Client) DeleteRowLevelSecurity(id int64) error {
+	csrfToken, cookies, err := c.GetCSRFToken()
+	if err != nil {
+		return err
+	}
+
+	headers := map[string]string{
+		"X-CSRFToken": csrfToken,
+		"Referer":     c.Host,
+	}
+
+	endpoint := fmt.Sprintf("/api/v1/rowlevelsecurity/%d", id)
+	resp, err := c.DoRequestWithHeadersAndCookies("DELETE", endpoint, nil, headers, cookies)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to delete RLS rule, status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
