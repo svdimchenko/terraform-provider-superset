@@ -1613,9 +1613,9 @@ func (c *Client) GetRowLevelSecurity(id int64) (*RowLevelSecurity, error) {
 
 	var result struct {
 		Result struct {
-			ID          int64  `json:"id"`
-			Name        string `json:"name"`
-			Tables      []struct {
+			ID     int64  `json:"id"`
+			Name   string `json:"name"`
+			Tables []struct {
 				ID int64 `json:"id"`
 			} `json:"tables"`
 			Clause      string `json:"clause"`
