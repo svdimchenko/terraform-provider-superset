@@ -34,10 +34,13 @@ data "superset_role" "analyst" {
 
 # Use the role ID in a resource
 resource "superset_row_level_security" "example" {
-  table_id    = 1
-  clause      = "department = 'sales'"
+  name        = "User Data Filter"
+  tables      = [1]
+  clause      = "user_id = '{{ current_user_id() }}'"
   role_ids    = [data.superset_role.analyst.id]
+  group_key   = "department"
   filter_type = "Regular"
+  description = "User-level data access filter"
 }
 
 # Output the role ID
