@@ -11,6 +11,7 @@ The Superset provider supports two authentication providers:
 Use `provider = "db"` or omit the provider field entirely to authenticate using Superset's internal database.
 
 **Example:**
+
 ```terraform
 provider "superset" {
   host     = "https://superset.example.com"
@@ -27,6 +28,7 @@ See [provider-db.tf](provider-db.tf) for a complete example.
 Use `provider = "ldap"` to authenticate using LDAP/Active Directory.
 
 **Example:**
+
 ```terraform
 provider "superset" {
   host     = "https://superset.example.com"
@@ -57,6 +59,7 @@ All configuration options can be set via environment variables:
 - `SUPERSET_PROVIDER` - Authentication provider (`db` or `ldap`)
 
 **Example:**
+
 ```bash
 export SUPERSET_HOST="https://superset.example.com"
 export SUPERSET_USERNAME="admin"
@@ -67,6 +70,7 @@ terraform plan
 ```
 
 When using environment variables, you can use an empty provider block:
+
 ```terraform
 provider "superset" {}
 ```
