@@ -71,10 +71,7 @@ provider "superset" {
 
 ### Optional
 
-- `host` (String) The URL of the Superset instance. This should include the protocol (http or https)
-and the hostname or IP address. Example: '<https://superset.example.com>'.
-- `password` (String, Sensitive) The password to authenticate with Superset.
-This value is sensitive and will not be displayed in logs or state files.
+- `host` (String) The URL of the Superset instance. This should include the protocol (http or https) and the hostname or IP address. Example: 'https://superset.example.com'.
+- `password` (String, Sensitive) The password to authenticate with Superset. This value is sensitive and will not be displayed in logs or state files.
 - `provider` (String) The authentication provider to use. Valid values are 'db' (database) or 'ldap'. Defaults to 'db'.
-- `username` (String) The username to authenticate with Superset.
-This user should have the necessary permissions to manage resources within Superset.
+- `username` (String) The username to authenticate with Superset. This user should have the necessary permissions to manage resources within Superset.

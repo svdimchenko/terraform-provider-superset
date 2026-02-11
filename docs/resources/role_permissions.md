@@ -36,7 +36,6 @@ resource "superset_role_permissions" "example" {
 - `last_updated` (String) The timestamp of the last update to the role permissions.
 
 <a id="nestedatt--resource_permissions"></a>
-
 ### Nested Schema for `resource_permissions`
 
 Required:

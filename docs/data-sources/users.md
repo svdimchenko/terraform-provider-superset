@@ -24,7 +24,6 @@ data "superset_users" "example" {}
 - `users` (Attributes List) List of users. (see [below for nested schema](#nestedatt--users))
 
 <a id="nestedatt--users"></a>
-
 ### Nested Schema for `users`
 
 Read-Only:
@@ -38,7 +37,6 @@ Read-Only:
 - `username` (String) Username of the user.
 
 <a id="nestedatt--users--roles"></a>
-
 ### Nested Schema for `users.roles`
 
 Read-Only:

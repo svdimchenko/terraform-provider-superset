@@ -23,6 +23,7 @@ repos:
       - id: markdownlint
         args:
           - --fix
+        exclude: ^docs/
   - repo: https://github.com/golangci/golangci-lint
     rev: v2.9.0
     hooks:
