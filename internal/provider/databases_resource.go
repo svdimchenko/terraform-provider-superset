@@ -47,6 +47,7 @@ type databaseResourceModel struct {
 	AllowDML       types.Bool   `tfsdk:"allow_dml"`
 	AllowRunAsync  types.Bool   `tfsdk:"allow_run_async"`
 	ExposeInSQLLab types.Bool   `tfsdk:"expose_in_sqllab"`
+	Extra          types.String `tfsdk:"extra"`
 }
 
 // Metadata returns the resource type name.
@@ -115,6 +116,13 @@ func (r *databaseResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Description: "Expose in SQL Lab.",
 				Required:    true,
 			},
+			"extra": schema.StringAttribute{
+				Description: "JSON string containing extra configuration (e.g., engine_params for S3 credentials). " +
+					"If not specified, defaults to {\"client_encoding\": \"utf8\"}. " +
+					"Example: {\"engine_params\": {\"connect_args\": {\"config\": {\"s3_endpoint\": \"...\", ...}}}}",
+				Optional:    true,
+				Computed:    true,
+			},
 		},
 	}
 }
@@ -134,6 +142,10 @@ func (r *databaseResource) Create(ctx context.Context, req resource.CreateReques
 
 	sqlalchemyURI := fmt.Sprintf("%s://%s:%s@%s:%d/%s", plan.DBEngine.ValueString(), plan.DBUser.ValueString(), plan.DBPass.ValueString(), plan.DBHost.ValueString(), plan.DBPort.ValueInt64(), plan.DBName.ValueString())
 	extra := `{"client_encoding": "utf8"}`
+	if !plan.Extra.IsNull() && !plan.Extra.IsUnknown() {
+		extra = plan.Extra.ValueString()
+	}
+	
 	payload := map[string]interface{}{
 		"allow_csv_upload":                  false,
 		"allow_ctas":                        plan.AllowCTAS.ValueBool(),
@@ -202,6 +214,8 @@ func (r *databaseResource) Create(ctx context.Context, req resource.CreateReques
 	if val, ok := resultData["expose_in_sqllab"].(bool); ok {
 		plan.ExposeInSQLLab = types.BoolValue(val)
 	}
+
+	plan.Extra = types.StringValue(extra)
 
 	diags = resp.State.Set(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
@@ -293,6 +307,11 @@ func (r *databaseResource) Read(ctx context.Context, req resource.ReadRequest, r
 			state.DBPass = types.StringNull()
 		}
 	}
+	if extra, ok := result["extra"].(string); ok && extra != "" {
+		state.Extra = types.StringValue(extra)
+	} else {
+		state.Extra = types.StringValue(`{"client_encoding": "utf8"}`)
+	}
 
 	diags = resp.State.Set(ctx, &state)
 	resp.Diagnostics.Append(diags...)
@@ -330,6 +349,10 @@ func (r *databaseResource) Update(ctx context.Context, req resource.UpdateReques
 
 	sqlalchemyURI := fmt.Sprintf("%s://%s:%s@%s:%d/%s", plan.DBEngine.ValueString(), plan.DBUser.ValueString(), plan.DBPass.ValueString(), plan.DBHost.ValueString(), plan.DBPort.ValueInt64(), plan.DBName.ValueString())
 	extra := `{"client_encoding": "utf8"}`
+	if !plan.Extra.IsNull() && !plan.Extra.IsUnknown() {
+		extra = plan.Extra.ValueString()
+	}
+	
 	payload := map[string]interface{}{
 		"allow_csv_upload":                  false,
 		"allow_ctas":                        plan.AllowCTAS.ValueBool(),
@@ -394,6 +417,7 @@ func (r *databaseResource) Update(ctx context.Context, req resource.UpdateReques
 	state.DBHost = types.StringValue(plan.DBHost.ValueString())
 	state.DBPort = types.Int64Value(plan.DBPort.ValueInt64())
 	state.DBName = types.StringValue(plan.DBName.ValueString())
+	state.Extra = types.StringValue(plan.Extra.ValueString())
 
 	diags = resp.State.Set(ctx, &state)
 	resp.Diagnostics.Append(diags...)
