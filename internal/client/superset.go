@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"sync"
 	"time"
@@ -1088,6 +1089,133 @@ func (c *Client) GetDatabaseNameByID(databaseID int64) (string, error) {
 	}
 
 	return "", fmt.Errorf("database with ID %d not found", databaseID)
+}
+
+// ImportDashboard imports a dashboard from a ZIP file.
+// passwords is a JSON string mapping "databases/file.yaml" to password.
+func (c *Client) ImportDashboard(zipData []byte, overwrite bool, passwords string) error {
+	csrfToken, cookies, err := c.GetCSRFToken()
+	if err != nil {
+		return err
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	part, err := writer.CreateFormFile("formData", "dashboard_export.zip")
+	if err != nil {
+		return err
+	}
+	if _, err := part.Write(zipData); err != nil {
+		return err
+	}
+
+	if overwrite {
+		_ = writer.WriteField("overwrite", "true")
+	}
+	if passwords != "" {
+		_ = writer.WriteField("passwords", passwords)
+	}
+	writer.Close()
+
+	url := fmt.Sprintf("%s/api/v1/dashboard/import/", c.Host)
+	req, err := http.NewRequest("POST", url, &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.Token))
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-CSRFToken", csrfToken)
+	req.Header.Set("Referer", c.Host)
+	for _, cookie := range cookies {
+		req.AddCookie(cookie)
+	}
+	for _, cookie := range c.Cookies {
+		req.AddCookie(cookie)
+	}
+
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to import dashboard, status code: %d, response: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+// GetDashboardIDByUUID finds a dashboard ID by its UUID using the Superset API.
+func (c *Client) GetDashboardIDByUUID(uuid string) (int64, error) {
+	endpoint := fmt.Sprintf("/api/v1/dashboard/?q=(filters:!((col:uuid,opr:eq,value:'%s')))", uuid)
+	resp, err := c.DoRequest("GET", endpoint, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("failed to fetch dashboard by uuid %q, status code: %d, response: %s", uuid, resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Result []struct {
+			ID float64 `json:"id"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+	if len(result.Result) == 0 {
+		return 0, fmt.Errorf("dashboard with uuid %q not found", uuid)
+	}
+	return int64(result.Result[0].ID), nil
+}
+
+// DashboardExistsByID checks if a dashboard with the given ID exists via the Superset API.
+func (c *Client) DashboardExistsByID(id int64) (bool, error) {
+	endpoint := fmt.Sprintf("/api/v1/dashboard/%d", id)
+	resp, err := c.DoRequest("GET", endpoint, nil)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return false, fmt.Errorf("failed to check dashboard existence, status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+	return true, nil
+}
+
+// DeleteDashboard deletes a dashboard by ID.
+func (c *Client) DeleteDashboard(id int64) error {
+	csrfToken, cookies, err := c.GetCSRFToken()
+	if err != nil {
+		return err
+	}
+	headers := map[string]string{
+		"X-CSRFToken": csrfToken,
+		"Referer":     c.Host,
+	}
+	resp, err := c.DoRequestWithHeadersAndCookies("DELETE", fmt.Sprintf("/api/v1/dashboard/%d", id), nil, headers, cookies)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to delete dashboard, status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+	return nil
 }
 
 // rawRoleModel represents a raw role model in the Superset client.

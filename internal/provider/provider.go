@@ -127,20 +127,16 @@ func (p *supersetProvider) Configure(ctx context.Context, req provider.Configure
 	if !config.Host.IsNull() {
 		host = config.Host.ValueString()
 	}
-
 	if !config.Username.IsNull() {
 		username = config.Username.ValueString()
 	}
-
 	if !config.Password.IsNull() {
 		password = config.Password.ValueString()
 	}
-
 	if !config.Provider.IsNull() {
 		providerType = config.Provider.ValueString()
 	}
 
-	// Default to "db" if not specified
 	if providerType == "" {
 		providerType = "db"
 	}
@@ -230,5 +226,6 @@ func (p *supersetProvider) Resources(_ context.Context) []func() resource.Resour
 		NewDatasetResource,          // New dataset resource
 		NewUserResource,             // New user resource
 		NewRowLevelSecurityResource, // Row level security resource
+		NewDashboardImportResource,  // Dashboard import resource
 	}
 }

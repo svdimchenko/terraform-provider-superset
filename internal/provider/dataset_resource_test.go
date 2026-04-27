@@ -23,6 +23,10 @@ func TestAccDatasetResource(t *testing.T) {
 		"refresh_token": "fake-refresh-token"
 	}`
 
+	// Mock CSRF token
+	httpmock.RegisterResponder("GET", "http://superset-host/api/v1/security/csrf_token/",
+		httpmock.NewStringResponder(200, `{"result": "fake-csrf-token"}`))
+
 	// Mock database list response (make it match what the test framework expects)
 	mockDatabasesResponse := `{
 		"result": [
@@ -176,6 +180,10 @@ func TestAccDatasetResourceWithSQL(t *testing.T) {
 		"refresh_token": "fake-refresh-token"
 	}`
 
+	// Mock CSRF token
+	httpmock.RegisterResponder("GET", "http://superset-host/api/v1/security/csrf_token/",
+		httpmock.NewStringResponder(200, `{"result": "fake-csrf-token"}`))
+
 	// Mock database list response (same as first test)
 	mockDatabasesResponse := `{
 		"result": [
@@ -270,18 +278,18 @@ func TestAccDatasetResourceWithSQL(t *testing.T) {
 	})
 }
 
-func testAccDatasetResourceConfig(tableName, databaseName, schema string) string {
-	return fmt.Sprintf(`
+func testAccDatasetResourceConfig(tableName, databaseName, schemaName string) string {
+	return providerConfig + fmt.Sprintf(`
 resource "superset_dataset" "test" {
   table_name    = %[1]q
   database_name = %[2]q
   schema        = %[3]q
 }
-`, tableName, databaseName, schema)
+`, tableName, databaseName, schemaName)
 }
 
 func testAccDatasetResourceConfigWithSQL(tableName, databaseName, sql string) string {
-	return fmt.Sprintf(`
+	return providerConfig + fmt.Sprintf(`
 resource "superset_dataset" "test" {
   table_name    = %[1]q
   database_name = %[2]q
