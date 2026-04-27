@@ -45,13 +45,14 @@ type dashboardImportResource struct {
 }
 
 type dashboardImportResourceModel struct {
-	ID              types.String `tfsdk:"id"`
-	SourceDir       types.String `tfsdk:"source_dir"`
-	ForceOverwrite  types.Bool   `tfsdk:"force_overwrite"`
-	DatabaseSecrets types.Map    `tfsdk:"database_secrets"`
-	FileHashes      types.Map    `tfsdk:"file_hashes"`
-	FileContents    types.Map    `tfsdk:"file_contents"`
-	DashboardID     types.Int64  `tfsdk:"dashboard_id"`
+	ID                types.String `tfsdk:"id"`
+	SourceDir         types.String `tfsdk:"source_dir"`
+	ForceOverwrite    types.Bool   `tfsdk:"force_overwrite"`
+	DatabaseSecrets   types.Map    `tfsdk:"database_secrets"`
+	DatabaseOverrides types.Map    `tfsdk:"database_overrides"`
+	FileHashes        types.Map    `tfsdk:"file_hashes"`
+	FileContents      types.Map    `tfsdk:"file_contents"`
+	DashboardID       types.Int64  `tfsdk:"dashboard_id"`
 }
 
 func (r *dashboardImportResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -89,6 +90,13 @@ func (r *dashboardImportResource) Schema(_ context.Context, _ resource.SchemaReq
 				Description: "Map of database UUID to database password/secret. Used to provide credentials for databases referenced in the export.",
 				Optional:    true,
 				Sensitive:   true,
+				ElementType: types.StringType,
+			},
+			"database_overrides": schema.MapAttribute{
+				Description: "Map of database UUID to a JSON-encoded object of YAML field overrides. " +
+					"Allows overriding any fields (including nested) in database export files before import. " +
+					"Example: {\"<uuid>\" = jsonencode({sqlalchemy_uri = \"...\", extra = {cost_estimate_enabled = false}})}",
+				Optional:    true,
 				ElementType: types.StringType,
 			},
 			"file_hashes": schema.MapAttribute{
@@ -141,7 +149,9 @@ func (r *dashboardImportResource) ModifyPlan(ctx context.Context, req resource.M
 		return
 	}
 
-	newHashes, newContents, err := computeFileHashesAndContents(sourceDir)
+	overrides := parseDatabaseOverrides(ctx, plan.DatabaseOverrides)
+
+	newHashes, newContents, err := computeFileHashesAndContentsWithOverrides(sourceDir, overrides)
 	if err != nil {
 		resp.Diagnostics.AddWarning("Cannot compute file hashes", err.Error())
 		return
@@ -271,14 +281,16 @@ func (r *dashboardImportResource) importDashboard(ctx context.Context, plan *das
 	}
 	plan.ID = types.StringValue(meta.UUID)
 
-	fileHashes, fileContents, err := computeFileHashesAndContents(sourceDir)
+	overrides := parseDatabaseOverrides(ctx, plan.DatabaseOverrides)
+
+	fileHashes, fileContents, err := computeFileHashesAndContentsWithOverrides(sourceDir, overrides)
 	if err != nil {
 		return fmt.Errorf("computing file hashes: %w", err)
 	}
 	plan.FileHashes = toStringMap(fileHashes)
 	plan.FileContents = toStringMap(fileContents)
 
-	zipData, err := zipDirectory(sourceDir)
+	zipData, err := zipDirectoryWithOverrides(sourceDir, overrides)
 	if err != nil {
 		return fmt.Errorf("creating ZIP: %w", err)
 	}
@@ -384,68 +396,6 @@ func buildPasswordMap(sourceDir string, secrets map[string]string) (map[string]s
 		}
 	}
 	return result, nil
-}
-
-func zipDirectory(sourceDir string) ([]byte, error) {
-	var buf bytes.Buffer
-	w := zip.NewWriter(&buf)
-	base := filepath.Base(sourceDir)
-	err := filepath.WalkDir(sourceDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(sourceDir, path)
-		if err != nil {
-			return err
-		}
-		zipPath := filepath.ToSlash(filepath.Join(base, rel))
-		if d.IsDir() {
-			_, err := w.Create(zipPath + "/")
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		f, err := w.Create(zipPath)
-		if err != nil {
-			return err
-		}
-		_, err = f.Write(data)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	if err := w.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-// computeFileHashesAndContents walks the directory and returns per-file SHA256 hashes and contents.
-func computeFileHashesAndContents(dir string) (hashes map[string]string, contents map[string]string, err error) {
-	hashes = make(map[string]string)
-	contents = make(map[string]string)
-	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		rel, _ := filepath.Rel(dir, path)
-		rel = filepath.ToSlash(rel)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		h := sha256.Sum256(data)
-		hashes[rel] = fmt.Sprintf("%x", h)
-		contents[rel] = string(data)
-		return nil
-	})
-	return
 }
 
 // buildUnifiedDiff produces a human-readable diff showing only changed lines per file.
@@ -658,4 +608,144 @@ func mapsEqual(a, b map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// parseDatabaseOverrides extracts database UUID -> arbitrary override map from JSON strings.
+func parseDatabaseOverrides(ctx context.Context, m types.Map) map[string]map[string]interface{} {
+	result := make(map[string]map[string]interface{})
+	if m.IsNull() || m.IsUnknown() {
+		return result
+	}
+	raw := make(map[string]string)
+	if diags := m.ElementsAs(ctx, &raw, false); diags.HasError() {
+		return result
+	}
+	for uuid, jsonStr := range raw {
+		var fields map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &fields); err != nil {
+			continue
+		}
+		if len(fields) > 0 {
+			result[uuid] = fields
+		}
+	}
+	return result
+}
+
+// deepMerge recursively merges src into dst. Values in src override dst.
+func deepMerge(dst, src map[string]interface{}) map[string]interface{} {
+	for k, srcVal := range src {
+		if dstVal, ok := dst[k]; ok {
+			if dstMap, ok := dstVal.(map[string]interface{}); ok {
+				if srcMap, ok := srcVal.(map[string]interface{}); ok {
+					dst[k] = deepMerge(dstMap, srcMap)
+					continue
+				}
+			}
+		}
+		dst[k] = srcVal
+	}
+	return dst
+}
+
+// applyDatabaseOverrides patches a database YAML file content by deep-merging overrides.
+// It matches by the "uuid" field in the YAML.
+func applyDatabaseOverrides(data []byte, overrides map[string]map[string]interface{}) ([]byte, error) {
+	if len(overrides) == 0 {
+		return data, nil
+	}
+
+	var doc map[string]interface{}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return data, err
+	}
+
+	uuid, _ := doc["uuid"].(string)
+	if uuid == "" {
+		return data, nil
+	}
+
+	fields, ok := overrides[uuid]
+	if !ok {
+		return data, nil
+	}
+
+	doc = deepMerge(doc, fields)
+
+	out, err := yaml.Marshal(doc)
+	if err != nil {
+		return data, err
+	}
+	return out, nil
+}
+
+// computeFileHashesAndContentsWithOverrides is like computeFileHashesAndContents but applies
+// database overrides to databases/*.yaml files before hashing.
+func computeFileHashesAndContentsWithOverrides(dir string, overrides map[string]map[string]interface{}) (hashes map[string]string, contents map[string]string, err error) {
+	hashes = make(map[string]string)
+	contents = make(map[string]string)
+	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(dir, p)
+		rel = filepath.ToSlash(rel)
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(rel, "databases/") && strings.HasSuffix(rel, ".yaml") {
+			data, _ = applyDatabaseOverrides(data, overrides)
+		}
+		h := sha256.Sum256(data)
+		hashes[rel] = fmt.Sprintf("%x", h)
+		contents[rel] = string(data)
+		return nil
+	})
+	return
+}
+
+// zipDirectoryWithOverrides creates a ZIP of sourceDir, applying database overrides to databases/*.yaml.
+func zipDirectoryWithOverrides(sourceDir string, overrides map[string]map[string]interface{}) ([]byte, error) {
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	base := filepath.Base(sourceDir)
+	err := filepath.WalkDir(sourceDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(sourceDir, p)
+		if err != nil {
+			return err
+		}
+		relSlash := filepath.ToSlash(rel)
+		zipPath := filepath.ToSlash(filepath.Join(base, rel))
+		if d.IsDir() {
+			_, err := w.Create(zipPath + "/")
+			return err
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(relSlash, "databases/") && strings.HasSuffix(relSlash, ".yaml") {
+			data, _ = applyDatabaseOverrides(data, overrides)
+		}
+		f, err := w.Create(zipPath)
+		if err != nil {
+			return err
+		}
+		_, err = f.Write(data)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
