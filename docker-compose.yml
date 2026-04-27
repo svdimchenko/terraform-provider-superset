@@ -24,7 +24,7 @@ services:
       retries: 5
 
   superset:
-    image: apache/superset:4.1.2
+    image: apache/superset:6.0.0
     environment:
       SUPERSET_SECRET_KEY: testsecretkey
       SUPERSET_LOAD_EXAMPLES: "no"
