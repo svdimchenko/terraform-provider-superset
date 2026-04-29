@@ -242,6 +242,7 @@ func (r *dashboardImportResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 	plan.ID = state.ID
+	plan.DashboardID = state.DashboardID
 
 	if err := r.importDashboard(ctx, &plan); err != nil {
 		resp.Diagnostics.AddError("Failed to re-import dashboard", err.Error())
@@ -315,6 +316,36 @@ func (r *dashboardImportResource) importDashboard(ctx context.Context, plan *das
 	overwrite := plan.ForceOverwrite.ValueBool()
 	tflog.Info(ctx, fmt.Sprintf("Importing dashboard from %s (overwrite=%v)", sourceDir, overwrite))
 
+	// If dashboard already exists, unlink all charts and clear layout before importing
+	existingID := plan.DashboardID.ValueInt64()
+	if existingID == 0 {
+		existingID, _ = r.client.GetDashboardIDByUUID(meta.UUID)
+	}
+	if existingID > 0 {
+		// Get all chart IDs on the dashboard
+		chartUUIDMap, err := r.client.GetDashboardChartUUIDs(existingID)
+		if err != nil {
+			tflog.Warn(ctx, fmt.Sprintf("Failed to get dashboard chart UUIDs: %s", err))
+		} else {
+			var allChartIDs []int64
+			for _, chartID := range chartUUIDMap {
+				allChartIDs = append(allChartIDs, chartID)
+			}
+			// Unlink all charts from dashboard
+			if len(allChartIDs) > 0 {
+				if err := r.client.UnlinkChartsFromDashboard(allChartIDs, existingID); err != nil {
+					tflog.Warn(ctx, fmt.Sprintf("Failed to unlink charts: %s", err))
+				}
+			}
+		}
+		// Clear position_json and json_metadata
+		if err := r.client.ClearDashboardLayout(existingID); err != nil {
+			tflog.Warn(ctx, fmt.Sprintf("Failed to clear dashboard layout: %s", err))
+		}
+		tflog.Info(ctx, fmt.Sprintf("Cleared all charts and layout from dashboard %d", existingID))
+	}
+
+	// Import dashboard
 	if err := r.client.ImportDashboard(zipData, overwrite, passwords); err != nil {
 		return err
 	}

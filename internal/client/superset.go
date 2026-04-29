@@ -1196,6 +1196,136 @@ func (c *Client) DashboardExistsByID(id int64) (bool, error) {
 	return true, nil
 }
 
+// ClearDashboardLayout clears position_json and json_metadata of a dashboard.
+func (c *Client) ClearDashboardLayout(dashboardID int64) error {
+	csrfToken, cookies, err := c.GetCSRFToken()
+	if err != nil {
+		return err
+	}
+
+	headers := map[string]string{
+		"X-CSRFToken": csrfToken,
+		"Referer":     c.Host,
+	}
+
+	payload := map[string]interface{}{
+		"position_json": "{}",
+		"json_metadata": "{}",
+	}
+
+	endpoint := fmt.Sprintf("/api/v1/dashboard/%d", dashboardID)
+	resp, err := c.DoRequestWithHeadersAndCookies("PUT", endpoint, payload, headers, cookies)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to clear dashboard layout, status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// GetDashboardChartUUIDs returns a map of chart UUID -> chart ID for all charts on a dashboard.
+func (c *Client) GetDashboardChartUUIDs(dashboardID int64) (map[string]int64, error) {
+	endpoint := fmt.Sprintf("/api/v1/dashboard/%d/charts", dashboardID)
+	resp, err := c.DoRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to get dashboard charts, status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+
+	var chartsResult struct {
+		Result []struct {
+			ID int64 `json:"id"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&chartsResult); err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]int64)
+	for _, chart := range chartsResult.Result {
+		chartResp, err := c.DoRequest("GET", fmt.Sprintf("/api/v1/chart/%d", chart.ID), nil)
+		if err != nil {
+			continue
+		}
+		var chartData struct {
+			Result struct {
+				UUID string `json:"uuid"`
+			} `json:"result"`
+		}
+		if err := json.NewDecoder(chartResp.Body).Decode(&chartData); err == nil && chartData.Result.UUID != "" {
+			result[chartData.Result.UUID] = chart.ID
+		}
+		chartResp.Body.Close()
+	}
+	return result, nil
+}
+
+// UnlinkChartsFromDashboard removes the dashboard from the given charts' dashboards list.
+func (c *Client) UnlinkChartsFromDashboard(chartIDs []int64, dashboardID int64) error {
+	if len(chartIDs) == 0 {
+		return nil
+	}
+
+	csrfToken, cookies, err := c.GetCSRFToken()
+	if err != nil {
+		return err
+	}
+	headers := map[string]string{
+		"X-CSRFToken": csrfToken,
+		"Referer":     c.Host,
+	}
+
+	for _, chartID := range chartIDs {
+		// Get chart's current dashboards
+		chartResp, err := c.DoRequest("GET", fmt.Sprintf("/api/v1/chart/%d", chartID), nil)
+		if err != nil {
+			continue
+		}
+		var chartData struct {
+			Result struct {
+				Dashboards []struct {
+					ID int64 `json:"id"`
+				} `json:"dashboards"`
+			} `json:"result"`
+		}
+		if err := json.NewDecoder(chartResp.Body).Decode(&chartData); err != nil {
+			chartResp.Body.Close()
+			continue
+		}
+		chartResp.Body.Close()
+
+		// Filter out the target dashboard
+		remaining := make([]int64, 0)
+		for _, d := range chartData.Result.Dashboards {
+			if d.ID != dashboardID {
+				remaining = append(remaining, d.ID)
+			}
+		}
+
+		payload := map[string]interface{}{
+			"dashboards": remaining,
+		}
+		updateResp, err := c.DoRequestWithHeadersAndCookies("PUT", fmt.Sprintf("/api/v1/chart/%d", chartID), payload, headers, cookies)
+		if err != nil {
+			return fmt.Errorf("failed to update chart %d: %w", chartID, err)
+		}
+		updateResp.Body.Close()
+		if updateResp.StatusCode != http.StatusOK {
+			return fmt.Errorf("failed to unlink chart %d from dashboard, status code: %d", chartID, updateResp.StatusCode)
+		}
+	}
+	return nil
+}
+
 // DeleteDashboard deletes a dashboard by ID.
 func (c *Client) DeleteDashboard(id int64) error {
 	csrfToken, cookies, err := c.GetCSRFToken()
