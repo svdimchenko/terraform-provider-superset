@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -177,12 +176,6 @@ func (r *dashboardImportResource) ModifyPlan(ctx context.Context, req resource.M
 	if changed {
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("file_hashes"), toStringMap(newHashes))...)
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("file_contents"), toStringMap(newContents))...)
-
-		oldContents := fromStringMap(state.FileContents)
-		diffSummary := buildUnifiedDiff(oldHashes, oldContents, newHashes, newContents)
-		if diffSummary != "" {
-			resp.Diagnostics.AddWarning("Dashboard source files changed", diffSummary)
-		}
 	} else {
 		// No changes — preserve state values in plan
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("file_hashes"), state.FileHashes)...)
@@ -427,181 +420,6 @@ func buildPasswordMap(sourceDir string, secrets map[string]string) (map[string]s
 		}
 	}
 	return result, nil
-}
-
-// buildUnifiedDiff produces a human-readable diff showing only changed lines per file.
-func buildUnifiedDiff(oldHashes, oldContents, newHashes, newContents map[string]string) string {
-	allFiles := make(map[string]bool)
-	for k := range oldHashes {
-		allFiles[k] = true
-	}
-	for k := range newHashes {
-		allFiles[k] = true
-	}
-
-	sorted := make([]string, 0, len(allFiles))
-	for k := range allFiles {
-		sorted = append(sorted, k)
-	}
-	sort.Strings(sorted)
-
-	var sb strings.Builder
-	for _, file := range sorted {
-		oldHash := oldHashes[file]
-		newHash := newHashes[file]
-
-		if oldHash == newHash {
-			continue
-		}
-
-		_, inOld := oldHashes[file]
-		_, inNew := newHashes[file]
-
-		if !inOld {
-			fmt.Fprintf(&sb, "\n--- /dev/null\n+++ %s\n", file)
-			for i, line := range strings.Split(newContents[file], "\n") {
-				fmt.Fprintf(&sb, "+%4d: %s\n", i+1, line)
-			}
-			continue
-		}
-
-		if !inNew {
-			fmt.Fprintf(&sb, "\n--- %s\n+++ /dev/null\n", file)
-			for i, line := range strings.Split(oldContents[file], "\n") {
-				fmt.Fprintf(&sb, "-%4d: %s\n", i+1, line)
-			}
-			continue
-		}
-
-		// Both exist, hash differs — show line-level diff
-		oldLines := strings.Split(oldContents[file], "\n")
-		newLines := strings.Split(newContents[file], "\n")
-
-		hunks := diffLines(oldLines, newLines)
-		if len(hunks) == 0 {
-			continue
-		}
-
-		fmt.Fprintf(&sb, "\n--- %s\n+++ %s\n", file, file)
-		for _, h := range hunks {
-			sb.WriteString(h)
-		}
-	}
-
-	return sb.String()
-}
-
-// diffLines produces unified-diff-style hunks between old and new line slices.
-// Uses a simple O(n) approach: walk both slices, emit context around changes.
-func diffLines(oldLines, newLines []string) []string {
-	// Build a simple edit script using longest common subsequence approach
-	// For practicality, use a line-by-line comparison with context
-	type edit struct {
-		op   byte // ' ', '-', '+'
-		line string
-		num  int // line number (1-based, in old for '-', in new for '+')
-	}
-
-	var edits []edit
-	oi, ni := 0, 0
-	for oi < len(oldLines) && ni < len(newLines) {
-		if oldLines[oi] == newLines[ni] {
-			edits = append(edits, edit{' ', oldLines[oi], oi + 1})
-			oi++
-			ni++
-		} else {
-			// Look ahead to find sync point
-			foundOld, foundNew := -1, -1
-			limit := 5
-			for look := 1; look <= limit; look++ {
-				if ni+look < len(newLines) && oi < len(oldLines) && oldLines[oi] == newLines[ni+look] {
-					foundNew = ni + look
-					break
-				}
-				if oi+look < len(oldLines) && ni < len(newLines) && oldLines[oi+look] == newLines[ni] {
-					foundOld = oi + look
-					break
-				}
-			}
-
-			if foundNew >= 0 {
-				// Lines were added in new
-				for ni < foundNew {
-					edits = append(edits, edit{'+', newLines[ni], ni + 1})
-					ni++
-				}
-			} else if foundOld >= 0 {
-				// Lines were removed from old
-				for oi < foundOld {
-					edits = append(edits, edit{'-', oldLines[oi], oi + 1})
-					oi++
-				}
-			} else {
-				// Replace
-				edits = append(edits, edit{'-', oldLines[oi], oi + 1})
-				edits = append(edits, edit{'+', newLines[ni], ni + 1})
-				oi++
-				ni++
-			}
-		}
-	}
-	for oi < len(oldLines) {
-		edits = append(edits, edit{'-', oldLines[oi], oi + 1})
-		oi++
-	}
-	for ni < len(newLines) {
-		edits = append(edits, edit{'+', newLines[ni], ni + 1})
-		ni++
-	}
-
-	// Emit only changed lines with surrounding context (1 line)
-	const contextLines = 1
-	var hunks []string
-	var hunk strings.Builder
-	lastPrinted := -1
-
-	for i, e := range edits {
-		if e.op == ' ' {
-			continue
-		}
-		// Print context before
-		start := i - contextLines
-		if start < 0 {
-			start = 0
-		}
-		if start <= lastPrinted {
-			start = lastPrinted + 1
-		}
-		for j := start; j < i; j++ {
-			if edits[j].op == ' ' {
-				fmt.Fprintf(&hunk, " %4d: %s\n", edits[j].num, edits[j].line)
-			}
-		}
-		// Print the change
-		if e.op == '-' {
-			fmt.Fprintf(&hunk, "-%4d: %s\n", e.num, e.line)
-		} else {
-			fmt.Fprintf(&hunk, "+%4d: %s\n", e.num, e.line)
-		}
-		// Print context after
-		end := i + contextLines + 1
-		if end > len(edits) {
-			end = len(edits)
-		}
-		for j := i + 1; j < end; j++ {
-			if edits[j].op == ' ' {
-				fmt.Fprintf(&hunk, " %4d: %s\n", edits[j].num, edits[j].line)
-			} else {
-				break
-			}
-		}
-		lastPrinted = end - 1
-	}
-
-	if hunk.Len() > 0 {
-		hunks = append(hunks, hunk.String())
-	}
-	return hunks
 }
 
 // toStringMap converts map[string]string to types.Map.
