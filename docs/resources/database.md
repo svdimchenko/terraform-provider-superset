@@ -12,10 +12,8 @@ Manages a database connection in Superset.
 
 ## Example Usage
 
-### PostgreSQL (using individual connection fields)
-
 ```terraform
-resource "superset_database" "postgresql" {
+resource "superset_database" "example" {
   connection_name  = "SuperSetDBConnection"
   db_engine        = "postgresql"
   db_user          = "supersetuser"
@@ -28,21 +26,6 @@ resource "superset_database" "postgresql" {
   allow_dml        = false
   allow_run_async  = true
   expose_in_sqllab = false
-}
-```
-
-### Amazon Athena (using sqlalchemy_uri)
-
-```terraform
-resource "superset_database" "athena" {
-  connection_name  = "AthenaConnection"
-  db_engine        = "awsathena"
-  sqlalchemy_uri   = "awsathena+rest://${var.aws_access_key}:${var.aws_secret_key}@athena.${var.aws_region}.amazonaws.com/${var.schema_name}?s3_staging_dir=${urlencode(var.s3_staging_dir)}&work_group=${var.work_group}"
-  allow_ctas       = false
-  allow_cvas       = false
-  allow_dml        = false
-  allow_run_async  = true
-  expose_in_sqllab = true
 }
 ```
 
@@ -61,12 +44,12 @@ resource "superset_database" "athena" {
 
 ### Optional
 
-- `sqlalchemy_uri` (String, Sensitive) Full SQLAlchemy URI for the database connection. When set, db_user/db_pass/db_host/db_port/db_name are ignored. Use this for engines like Athena: `awsathena+rest://{access_key}:{secret_key}@athena.{region}.amazonaws.com/{schema}?s3_staging_dir={s3_staging_dir}`
-- `db_user` (String) Database username. Not required when sqlalchemy_uri is set.
-- `db_pass` (String, Sensitive) Database password. Not required when sqlalchemy_uri is set.
 - `db_host` (String) Database host. Not required when sqlalchemy_uri is set.
-- `db_port` (Number) Database port. Not required when sqlalchemy_uri is set.
 - `db_name` (String) Database name. Not required when sqlalchemy_uri is set.
+- `db_pass` (String, Sensitive) Database password. Not required when sqlalchemy_uri is set.
+- `db_port` (Number) Database port. Not required when sqlalchemy_uri is set.
+- `db_user` (String) Database username. Not required when sqlalchemy_uri is set.
+- `sqlalchemy_uri` (String, Sensitive) Full SQLAlchemy URI for the database connection. When set, db_user/db_pass/db_host/db_port/db_name are ignored. Use this for engines like Athena: awsathena+rest://{access_key}:{secret_key}@athena.{region}.amazonaws.com/{schema}?s3_staging_dir={s3_staging_dir}
 
 ### Read-Only
 

@@ -51,6 +51,5 @@ resource "superset_dashboard_import" "example" {
 ### Read-Only
 
 - `dashboard_id` (Number) Numeric ID of the imported dashboard in Superset.
-- `file_contents` (Map of String) Stored file contents for diff computation.
 - `file_hashes` (Map of String) Map of relative file path to SHA256 hash. Changes to individual files trigger re-import.
 - `id` (String) Dashboard UUID from the export.

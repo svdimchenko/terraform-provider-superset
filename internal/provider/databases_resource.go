@@ -72,7 +72,7 @@ func (r *databaseResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Required:    true,
 			},
 			"db_engine": schema.StringAttribute{
-				Description: "Database engine (e.g., postgresql, mysql, awsathena+rest).",
+				Description: "Database engine (e.g., postgresql, mysql, awsathena).",
 				Required:    true,
 			},
 			"sqlalchemy_uri": schema.StringAttribute{
