@@ -56,7 +56,7 @@ resource "superset_database" "athena" {
 - `allow_dml` (Boolean) Allow DML.
 - `allow_run_async` (Boolean) Allow run async.
 - `connection_name` (String) Name of the database connection.
-- `db_engine` (String) Database engine (e.g., postgresql, mysql, awsathena+rest).
+- `db_engine` (String) Database engine (e.g., postgresql, mysql, awsathena).
 - `expose_in_sqllab` (Boolean) Expose in SQL Lab.
 
 ### Optional
