@@ -39,13 +39,17 @@ resource "superset_database" "example" {
 - `allow_dml` (Boolean) Allow DML.
 - `allow_run_async` (Boolean) Allow run async.
 - `connection_name` (String) Name of the database connection.
-- `db_engine` (String) Database engine (e.g., postgresql, mysql).
-- `db_host` (String) Database host.
-- `db_name` (String) Database name.
-- `db_pass` (String, Sensitive) Database password.
-- `db_port` (Number) Database port.
-- `db_user` (String) Database username.
+- `db_engine` (String) Database engine (e.g., postgresql, mysql, awsathena).
 - `expose_in_sqllab` (Boolean) Expose in SQL Lab.
+
+### Optional
+
+- `db_host` (String) Database host. Not required when sqlalchemy_uri is set.
+- `db_name` (String) Database name. Not required when sqlalchemy_uri is set.
+- `db_pass` (String, Sensitive) Database password. Not required when sqlalchemy_uri is set.
+- `db_port` (Number) Database port. Not required when sqlalchemy_uri is set.
+- `db_user` (String) Database username. Not required when sqlalchemy_uri is set.
+- `sqlalchemy_uri` (String, Sensitive) Full SQLAlchemy URI for the database connection. When set, db_user/db_pass/db_host/db_port/db_name are ignored. Use this for engines like Athena: awsathena+rest://{access_key}:{secret_key}@athena.{region}.amazonaws.com/{schema}?s3_staging_dir={s3_staging_dir}
 
 ### Read-Only
 

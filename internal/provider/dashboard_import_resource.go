@@ -50,7 +50,6 @@ type dashboardImportResourceModel struct {
 	DatabaseSecrets   types.Map    `tfsdk:"database_secrets"`
 	DatabaseOverrides types.Map    `tfsdk:"database_overrides"`
 	FileHashes        types.Map    `tfsdk:"file_hashes"`
-	FileContents      types.Map    `tfsdk:"file_contents"`
 	DashboardID       types.Int64  `tfsdk:"dashboard_id"`
 }
 
@@ -103,11 +102,6 @@ func (r *dashboardImportResource) Schema(_ context.Context, _ resource.SchemaReq
 				Computed:    true,
 				ElementType: types.StringType,
 			},
-			"file_contents": schema.MapAttribute{
-				Description: "Stored file contents for diff computation.",
-				Computed:    true,
-				ElementType: types.StringType,
-			},
 			"dashboard_id": schema.Int64Attribute{
 				Description: "Numeric ID of the imported dashboard in Superset.",
 				Computed:    true,
@@ -150,16 +144,15 @@ func (r *dashboardImportResource) ModifyPlan(ctx context.Context, req resource.M
 
 	overrides := parseDatabaseOverrides(ctx, plan.DatabaseOverrides)
 
-	newHashes, newContents, err := computeFileHashesAndContentsWithOverrides(sourceDir, overrides)
+	newHashes, err := computeFileHashesWithOverrides(sourceDir, overrides)
 	if err != nil {
 		resp.Diagnostics.AddWarning("Cannot compute file hashes", err.Error())
 		return
 	}
 
-	// On create (no prior state), always set hashes/contents
+	// On create (no prior state), always set hashes
 	if req.State.Raw.IsNull() {
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("file_hashes"), toStringMap(newHashes))...)
-		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("file_contents"), toStringMap(newContents))...)
 		return
 	}
 
@@ -175,11 +168,9 @@ func (r *dashboardImportResource) ModifyPlan(ctx context.Context, req resource.M
 
 	if changed {
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("file_hashes"), toStringMap(newHashes))...)
-		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("file_contents"), toStringMap(newContents))...)
 	} else {
 		// No changes — preserve state values in plan
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("file_hashes"), state.FileHashes)...)
-		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("file_contents"), state.FileContents)...)
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("dashboard_id"), state.DashboardID)...)
 	}
 }
@@ -277,12 +268,11 @@ func (r *dashboardImportResource) importDashboard(ctx context.Context, plan *das
 
 	overrides := parseDatabaseOverrides(ctx, plan.DatabaseOverrides)
 
-	fileHashes, fileContents, err := computeFileHashesAndContentsWithOverrides(sourceDir, overrides)
+	fileHashes, err := computeFileHashesWithOverrides(sourceDir, overrides)
 	if err != nil {
 		return fmt.Errorf("computing file hashes: %w", err)
 	}
 	plan.FileHashes = toStringMap(fileHashes)
-	plan.FileContents = toStringMap(fileContents)
 
 	zipData, err := zipDirectoryWithOverrides(sourceDir, overrides)
 	if err != nil {
@@ -528,12 +518,11 @@ func applyDatabaseOverrides(data []byte, overrides map[string]map[string]interfa
 	return out, nil
 }
 
-// computeFileHashesAndContentsWithOverrides is like computeFileHashesAndContents but applies
-// database overrides to databases/*.yaml files before hashing.
-func computeFileHashesAndContentsWithOverrides(dir string, overrides map[string]map[string]interface{}) (hashes map[string]string, contents map[string]string, err error) {
-	hashes = make(map[string]string)
-	contents = make(map[string]string)
-	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+// computeFileHashesWithOverrides computes SHA256 hashes for all files in dir,
+// applying database overrides to databases/*.yaml files before hashing.
+func computeFileHashesWithOverrides(dir string, overrides map[string]map[string]interface{}) (map[string]string, error) {
+	hashes := make(map[string]string)
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -551,10 +540,9 @@ func computeFileHashesAndContentsWithOverrides(dir string, overrides map[string]
 		}
 		h := sha256.Sum256(data)
 		hashes[rel] = fmt.Sprintf("%x", h)
-		contents[rel] = string(data)
 		return nil
 	})
-	return
+	return hashes, err
 }
 
 // zipDirectoryWithOverrides creates a ZIP of sourceDir, applying database overrides to databases/*.yaml.
