@@ -51,6 +51,7 @@ type dashboardImportResourceModel struct {
 	DatabaseOverrides types.Map    `tfsdk:"database_overrides"`
 	FileHashes        types.Map    `tfsdk:"file_hashes"`
 	DashboardID       types.Int64  `tfsdk:"dashboard_id"`
+	Roles             types.List   `tfsdk:"roles"`
 }
 
 func (r *dashboardImportResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -108,6 +109,11 @@ func (r *dashboardImportResource) Schema(_ context.Context, _ resource.SchemaReq
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.UseStateForUnknown(),
 				},
+			},
+			"roles": schema.ListAttribute{
+				Description: "List of role IDs to assign to the dashboard. Applied after every import.",
+				Optional:    true,
+				ElementType: types.Int64Type,
 			},
 		},
 	}
@@ -348,6 +354,18 @@ func (r *dashboardImportResource) importDashboard(ctx context.Context, plan *das
 		return fmt.Errorf("dashboard imported but could not find it after retries: %w", err)
 	}
 	plan.DashboardID = types.Int64Value(dashID)
+
+	// Apply roles if configured
+	if !plan.Roles.IsNull() && !plan.Roles.IsUnknown() {
+		var roleIDs []int64
+		diags := plan.Roles.ElementsAs(ctx, &roleIDs, false)
+		if diags.HasError() {
+			return fmt.Errorf("reading roles")
+		}
+		if err := r.client.SetDashboardRoles(dashID, roleIDs); err != nil {
+			return fmt.Errorf("setting dashboard roles: %w", err)
+		}
+	}
 
 	return nil
 }
