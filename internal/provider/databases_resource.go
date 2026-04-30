@@ -37,6 +37,7 @@ type databaseResourceModel struct {
 	ID             types.Int64  `tfsdk:"id"`
 	ConnectionName types.String `tfsdk:"connection_name"`
 	DBEngine       types.String `tfsdk:"db_engine"`
+	SQLAlchemyURI  types.String `tfsdk:"sqlalchemy_uri"`
 	DBUser         types.String `tfsdk:"db_user"`
 	DBPass         types.String `tfsdk:"db_pass"`
 	DBHost         types.String `tfsdk:"db_host"`
@@ -71,29 +72,35 @@ func (r *databaseResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Required:    true,
 			},
 			"db_engine": schema.StringAttribute{
-				Description: "Database engine (e.g., postgresql, mysql).",
+				Description: "Database engine (e.g., postgresql, mysql, awsathena+rest).",
 				Required:    true,
+			},
+			"sqlalchemy_uri": schema.StringAttribute{
+				Description: "Full SQLAlchemy URI for the database connection. When set, db_user/db_pass/db_host/db_port/db_name are ignored. " +
+					"Use this for engines like Athena: awsathena+rest://{access_key}:{secret_key}@athena.{region}.amazonaws.com/{schema}?s3_staging_dir={s3_staging_dir}",
+				Optional:  true,
+				Sensitive: true,
 			},
 			"db_user": schema.StringAttribute{
-				Description: "Database username.",
-				Required:    true,
+				Description: "Database username. Not required when sqlalchemy_uri is set.",
+				Optional:    true,
 			},
 			"db_pass": schema.StringAttribute{
-				Description: "Database password.",
-				Required:    true,
+				Description: "Database password. Not required when sqlalchemy_uri is set.",
+				Optional:    true,
 				Sensitive:   true,
 			},
 			"db_host": schema.StringAttribute{
-				Description: "Database host.",
-				Required:    true,
+				Description: "Database host. Not required when sqlalchemy_uri is set.",
+				Optional:    true,
 			},
 			"db_port": schema.Int64Attribute{
-				Description: "Database port.",
-				Required:    true,
+				Description: "Database port. Not required when sqlalchemy_uri is set.",
+				Optional:    true,
 			},
 			"db_name": schema.StringAttribute{
-				Description: "Database name.",
-				Required:    true,
+				Description: "Database name. Not required when sqlalchemy_uri is set.",
+				Optional:    true,
 			},
 			"allow_ctas": schema.BoolAttribute{
 				Description: "Allow CTAS.",
@@ -132,21 +139,8 @@ func (r *databaseResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
-	sqlalchemyURI := fmt.Sprintf("%s://%s:%s@%s:%d/%s", plan.DBEngine.ValueString(), plan.DBUser.ValueString(), plan.DBPass.ValueString(), plan.DBHost.ValueString(), plan.DBPort.ValueInt64(), plan.DBName.ValueString())
-	extra := `{"client_encoding": "utf8"}`
-	payload := map[string]interface{}{
-		"allow_csv_upload":                  false,
-		"allow_ctas":                        plan.AllowCTAS.ValueBool(),
-		"allow_cvas":                        plan.AllowCVAS.ValueBool(),
-		"allow_dml":                         plan.AllowDML.ValueBool(),
-		"allow_multi_schema_metadata_fetch": true,
-		"allow_run_async":                   plan.AllowRunAsync.ValueBool(),
-		"cache_timeout":                     0,
-		"expose_in_sqllab":                  plan.ExposeInSQLLab.ValueBool(),
-		"database_name":                     plan.ConnectionName.ValueString(),
-		"sqlalchemy_uri":                    sqlalchemyURI,
-		"extra":                             extra,
-	}
+	sqlalchemyURI := buildSQLAlchemyURI(plan)
+	payload := buildDatabasePayload(plan, sqlalchemyURI)
 
 	result, err := r.client.CreateDatabase(payload)
 	if err != nil {
@@ -273,24 +267,21 @@ func (r *databaseResource) Read(ctx context.Context, req resource.ReadRequest, r
 	if val, ok := result["backend"].(string); ok {
 		state.DBEngine = types.StringValue(val)
 	}
-	if params, ok := result["parameters"].(map[string]interface{}); ok {
-		if val, ok := params["host"].(string); ok {
-			state.DBHost = types.StringValue(val)
-		}
-		if val, ok := params["username"].(string); ok {
-			state.DBUser = types.StringValue(val)
-		}
-		if val, ok := params["port"].(float64); ok {
-			state.DBPort = types.Int64Value(int64(val))
-		}
-		if val, ok := params["database"].(string); ok {
-			state.DBName = types.StringValue(val)
-		}
-		// Preserve the db_pass value from the state if it exists.
-		if !state.DBPass.IsNull() {
-			state.DBPass = types.StringValue(state.DBPass.ValueString())
-		} else {
-			state.DBPass = types.StringNull()
+	// Only populate individual fields if sqlalchemy_uri is not used
+	if state.SQLAlchemyURI.IsNull() || state.SQLAlchemyURI.ValueString() == "" {
+		if params, ok := result["parameters"].(map[string]interface{}); ok {
+			if val, ok := params["host"].(string); ok {
+				state.DBHost = types.StringValue(val)
+			}
+			if val, ok := params["username"].(string); ok {
+				state.DBUser = types.StringValue(val)
+			}
+			if val, ok := params["port"].(float64); ok {
+				state.DBPort = types.Int64Value(int64(val))
+			}
+			if val, ok := params["database"].(string); ok {
+				state.DBName = types.StringValue(val)
+			}
 		}
 	}
 
@@ -328,21 +319,8 @@ func (r *databaseResource) Update(ctx context.Context, req resource.UpdateReques
 		return
 	}
 
-	sqlalchemyURI := fmt.Sprintf("%s://%s:%s@%s:%d/%s", plan.DBEngine.ValueString(), plan.DBUser.ValueString(), plan.DBPass.ValueString(), plan.DBHost.ValueString(), plan.DBPort.ValueInt64(), plan.DBName.ValueString())
-	extra := `{"client_encoding": "utf8"}`
-	payload := map[string]interface{}{
-		"allow_csv_upload":                  false,
-		"allow_ctas":                        plan.AllowCTAS.ValueBool(),
-		"allow_cvas":                        plan.AllowCVAS.ValueBool(),
-		"allow_dml":                         plan.AllowDML.ValueBool(),
-		"allow_multi_schema_metadata_fetch": true,
-		"allow_run_async":                   plan.AllowRunAsync.ValueBool(),
-		"cache_timeout":                     0,
-		"expose_in_sqllab":                  plan.ExposeInSQLLab.ValueBool(),
-		"database_name":                     plan.ConnectionName.ValueString(),
-		"sqlalchemy_uri":                    sqlalchemyURI,
-		"extra":                             extra,
-	}
+	sqlalchemyURI := buildSQLAlchemyURI(plan)
+	payload := buildDatabasePayload(plan, sqlalchemyURI)
 
 	result, err := r.client.UpdateDatabase(state.ID.ValueInt64(), payload)
 	if err != nil {
@@ -388,12 +366,13 @@ func (r *databaseResource) Update(ctx context.Context, req resource.UpdateReques
 		state.ExposeInSQLLab = types.BoolValue(val)
 	}
 
-	state.DBEngine = types.StringValue(plan.DBEngine.ValueString())
-	state.DBUser = types.StringValue(plan.DBUser.ValueString())
-	state.DBPass = types.StringValue(plan.DBPass.ValueString())
-	state.DBHost = types.StringValue(plan.DBHost.ValueString())
-	state.DBPort = types.Int64Value(plan.DBPort.ValueInt64())
-	state.DBName = types.StringValue(plan.DBName.ValueString())
+	state.DBEngine = plan.DBEngine
+	state.SQLAlchemyURI = plan.SQLAlchemyURI
+	state.DBUser = plan.DBUser
+	state.DBPass = plan.DBPass
+	state.DBHost = plan.DBHost
+	state.DBPort = plan.DBPort
+	state.DBName = plan.DBName
 
 	diags = resp.State.Set(ctx, &state)
 	resp.Diagnostics.Append(diags...)
@@ -461,6 +440,33 @@ func (r *databaseResource) ImportState(ctx context.Context, req resource.ImportS
 	tflog.Debug(ctx, "ImportState completed successfully", map[string]interface{}{
 		"import_id": req.ID,
 	})
+}
+
+// buildSQLAlchemyURI returns the SQLAlchemy URI from either the explicit field or constructed from parts.
+func buildSQLAlchemyURI(plan databaseResourceModel) string {
+	if !plan.SQLAlchemyURI.IsNull() && plan.SQLAlchemyURI.ValueString() != "" {
+		return plan.SQLAlchemyURI.ValueString()
+	}
+	return fmt.Sprintf("%s://%s:%s@%s:%d/%s",
+		plan.DBEngine.ValueString(), plan.DBUser.ValueString(), plan.DBPass.ValueString(),
+		plan.DBHost.ValueString(), plan.DBPort.ValueInt64(), plan.DBName.ValueString())
+}
+
+// buildDatabasePayload constructs the API payload for create/update.
+func buildDatabasePayload(plan databaseResourceModel, sqlalchemyURI string) map[string]interface{} {
+	return map[string]interface{}{
+		"allow_csv_upload":                  false,
+		"allow_ctas":                        plan.AllowCTAS.ValueBool(),
+		"allow_cvas":                        plan.AllowCVAS.ValueBool(),
+		"allow_dml":                         plan.AllowDML.ValueBool(),
+		"allow_multi_schema_metadata_fetch": true,
+		"allow_run_async":                   plan.AllowRunAsync.ValueBool(),
+		"cache_timeout":                     0,
+		"expose_in_sqllab":                  plan.ExposeInSQLLab.ValueBool(),
+		"database_name":                     plan.ConnectionName.ValueString(),
+		"sqlalchemy_uri":                    sqlalchemyURI,
+		"extra":                             `{"client_encoding": "utf8"}`,
+	}
 }
 
 // Configure adds the provider configured client to the resource.
