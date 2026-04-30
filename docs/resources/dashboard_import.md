@@ -32,6 +32,9 @@ resource "superset_dashboard_import" "example" {
       }
     })
   }
+
+  # Role IDs to assign to the dashboard. Applied after every create/update.
+  roles = [superset_role.analytics.id, superset_role.viewers.id]
 }
 ```
 
@@ -47,6 +50,7 @@ resource "superset_dashboard_import" "example" {
 - `database_overrides` (Map of String) Map of database UUID to a JSON-encoded object of YAML field overrides. Allows overriding any fields (including nested) in database export files before import. Example: {"<uuid>" = jsonencode({sqlalchemy_uri = "...", extra = {cost_estimate_enabled = false}})}
 - `database_secrets` (Map of String, Sensitive) Map of database UUID to database password/secret. Used to provide credentials for databases referenced in the export.
 - `force_overwrite` (Boolean) Whether to overwrite existing dashboards on import. Defaults to true.
+- `roles` (List of Number) List of role IDs to assign to the dashboard. Applied after every import.
 
 ### Read-Only
 

@@ -1326,6 +1326,31 @@ func (c *Client) UnlinkChartsFromDashboard(chartIDs []int64, dashboardID int64) 
 	return nil
 }
 
+// SetDashboardRoles sets the roles on a dashboard by ID.
+func (c *Client) SetDashboardRoles(dashboardID int64, roleIDs []int64) error {
+	csrfToken, cookies, err := c.GetCSRFToken()
+	if err != nil {
+		return err
+	}
+	headers := map[string]string{
+		"X-CSRFToken": csrfToken,
+		"Referer":     c.Host,
+	}
+	payload := map[string]interface{}{
+		"roles": roleIDs,
+	}
+	resp, err := c.DoRequestWithHeadersAndCookies("PUT", fmt.Sprintf("/api/v1/dashboard/%d", dashboardID), payload, headers, cookies)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to set dashboard roles, status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
 // DeleteDashboard deletes a dashboard by ID.
 func (c *Client) DeleteDashboard(id int64) error {
 	csrfToken, cookies, err := c.GetCSRFToken()
