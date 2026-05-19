@@ -2031,3 +2031,93 @@ func (c *Client) DeleteRowLevelSecurity(id int64) error {
 
 	return nil
 }
+
+// DashboardEmbedded represents an embedded dashboard configuration.
+type DashboardEmbedded struct {
+	UUID           string   `json:"uuid"`
+	AllowedDomains []string `json:"allowed_domains"`
+}
+
+// GetDashboardEmbedded retrieves the embedded configuration for a dashboard.
+func (c *Client) GetDashboardEmbedded(dashboardID int64) (*DashboardEmbedded, error) {
+	endpoint := fmt.Sprintf("/api/v1/dashboard/%d/embedded", dashboardID)
+	resp, err := c.DoRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to get embedded dashboard, status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Result DashboardEmbedded `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result.Result, nil
+}
+
+// CreateDashboardEmbedded creates or updates the embedded configuration for a dashboard.
+func (c *Client) CreateDashboardEmbedded(dashboardID int64, allowedDomains []string) (*DashboardEmbedded, error) {
+	csrfToken, cookies, err := c.GetCSRFToken()
+	if err != nil {
+		return nil, err
+	}
+	headers := map[string]string{
+		"X-CSRFToken": csrfToken,
+		"Referer":     c.Host,
+	}
+	payload := map[string]interface{}{
+		"allowed_domains": allowedDomains,
+	}
+	endpoint := fmt.Sprintf("/api/v1/dashboard/%d/embedded", dashboardID)
+	resp, err := c.DoRequestWithHeadersAndCookies("POST", endpoint, payload, headers, cookies)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to create embedded dashboard, status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Result DashboardEmbedded `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result.Result, nil
+}
+
+// DeleteDashboardEmbedded removes the embedded configuration for a dashboard.
+func (c *Client) DeleteDashboardEmbedded(dashboardID int64) error {
+	csrfToken, cookies, err := c.GetCSRFToken()
+	if err != nil {
+		return err
+	}
+	headers := map[string]string{
+		"X-CSRFToken": csrfToken,
+		"Referer":     c.Host,
+	}
+	endpoint := fmt.Sprintf("/api/v1/dashboard/%d/embedded", dashboardID)
+	resp, err := c.DoRequestWithHeadersAndCookies("DELETE", endpoint, nil, headers, cookies)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to delete embedded dashboard, status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
