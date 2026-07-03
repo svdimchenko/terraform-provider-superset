@@ -280,11 +280,6 @@ func (r *dashboardImportResource) importDashboard(ctx context.Context, plan *das
 	}
 	plan.FileHashes = toStringMap(fileHashes)
 
-	zipData, err := zipDirectoryWithOverrides(sourceDir, overrides)
-	if err != nil {
-		return fmt.Errorf("creating ZIP: %w", err)
-	}
-
 	secrets := make(map[string]string)
 	if !plan.DatabaseSecrets.IsNull() && !plan.DatabaseSecrets.IsUnknown() {
 		diags := plan.DatabaseSecrets.ElementsAs(ctx, &secrets, false)
@@ -305,38 +300,34 @@ func (r *dashboardImportResource) importDashboard(ctx context.Context, plan *das
 	overwrite := plan.ForceOverwrite.ValueBool()
 	tflog.Info(ctx, fmt.Sprintf("Importing dashboard from %s (overwrite=%v)", sourceDir, overwrite))
 
-	// If dashboard already exists, unlink all charts and clear layout before importing
-	existingID := plan.DashboardID.ValueInt64()
-	if existingID == 0 {
-		existingID, _ = r.client.GetDashboardIDByUUID(meta.UUID)
+	// Step 1: Import datasets via dedicated endpoint (properly overwrites existing datasets)
+	datasetZip, err := zipDirectoryFiltered(sourceDir, overrides, []string{"datasets/", "databases/"}, "Dataset")
+	if err != nil {
+		return fmt.Errorf("creating dataset ZIP: %w", err)
 	}
-	if existingID > 0 {
-		// Get all chart IDs on the dashboard
-		chartUUIDMap, err := r.client.GetDashboardChartUUIDs(existingID)
-		if err != nil {
-			tflog.Warn(ctx, fmt.Sprintf("Failed to get dashboard chart UUIDs: %s", err))
-		} else {
-			var allChartIDs []int64
-			for _, chartID := range chartUUIDMap {
-				allChartIDs = append(allChartIDs, chartID)
-			}
-			// Unlink all charts from dashboard
-			if len(allChartIDs) > 0 {
-				if err := r.client.UnlinkChartsFromDashboard(allChartIDs, existingID); err != nil {
-					tflog.Warn(ctx, fmt.Sprintf("Failed to unlink charts: %s", err))
-				}
-			}
-		}
-		// Clear position_json and json_metadata
-		if err := r.client.ClearDashboardLayout(existingID); err != nil {
-			tflog.Warn(ctx, fmt.Sprintf("Failed to clear dashboard layout: %s", err))
-		}
-		tflog.Info(ctx, fmt.Sprintf("Cleared all charts and layout from dashboard %d", existingID))
+	tflog.Info(ctx, "Importing datasets via /api/v1/dataset/import/")
+	if err := r.client.ImportDataset(datasetZip, overwrite, passwords); err != nil {
+		return fmt.Errorf("importing datasets: %w", err)
 	}
 
-	// Import dashboard
-	if err := r.client.ImportDashboard(zipData, overwrite, passwords); err != nil {
-		return err
+	// Step 2: Import charts via dedicated endpoint (properly overwrites existing charts)
+	chartZip, err := zipDirectoryFiltered(sourceDir, overrides, []string{"charts/", "datasets/", "databases/"}, "Slice")
+	if err != nil {
+		return fmt.Errorf("creating chart ZIP: %w", err)
+	}
+	tflog.Info(ctx, "Importing charts via /api/v1/chart/import/")
+	if err := r.client.ImportChart(chartZip, overwrite, passwords); err != nil {
+		return fmt.Errorf("importing charts: %w", err)
+	}
+
+	// Step 3: Import full dashboard (dashboard metadata, layout, etc.)
+	fullZip, err := zipDirectoryWithOverrides(sourceDir, overrides)
+	if err != nil {
+		return fmt.Errorf("creating full dashboard ZIP: %w", err)
+	}
+	tflog.Info(ctx, "Importing dashboard via /api/v1/dashboard/import/")
+	if err := r.client.ImportDashboard(fullZip, overwrite, passwords); err != nil {
+		return fmt.Errorf("importing dashboard: %w", err)
 	}
 
 	var dashID int64
@@ -561,6 +552,101 @@ func computeFileHashesWithOverrides(dir string, overrides map[string]map[string]
 		return nil
 	})
 	return hashes, err
+}
+
+// zipDirectoryFiltered creates a ZIP containing only specified subdirectories from sourceDir,
+// with a custom metadata.yaml type. This is used for the sequential import strategy where
+// datasets and charts are imported via their dedicated endpoints before the full dashboard import.
+// includePrefixes specifies which subdirectories to include (e.g., []string{"datasets/", "databases/"}).
+// metadataType specifies the type field in metadata.yaml (e.g., "Dataset", "Slice", "Dashboard").
+func zipDirectoryFiltered(sourceDir string, overrides map[string]map[string]interface{}, includePrefixes []string, metadataType string) ([]byte, error) {
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	base := filepath.Base(sourceDir)
+
+	// Walk source directory and include only files matching the prefixes
+	err := filepath.WalkDir(sourceDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(sourceDir, p)
+		if err != nil {
+			return err
+		}
+		relSlash := filepath.ToSlash(rel)
+
+		// Skip the root metadata.yaml — we'll generate a custom one
+		if relSlash == "metadata.yaml" {
+			return nil
+		}
+
+		// Check if this file/dir matches any included prefix
+		included := false
+		for _, prefix := range includePrefixes {
+			if strings.HasPrefix(relSlash, prefix) || relSlash == strings.TrimSuffix(prefix, "/") {
+				included = true
+				break
+			}
+		}
+		if !included && relSlash != "." {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		zipPath := filepath.ToSlash(filepath.Join(base, rel))
+		if d.IsDir() {
+			_, err := w.Create(zipPath + "/")
+			return err
+		}
+
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(relSlash, "databases/") && strings.HasSuffix(relSlash, ".yaml") {
+			data, _ = applyDatabaseOverrides(data, overrides)
+		}
+		f, err := w.Create(zipPath)
+		if err != nil {
+			return err
+		}
+		_, err = f.Write(data)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Read the original metadata.yaml to get version, then write a custom one with the desired type
+	origMeta, err := os.ReadFile(filepath.Join(sourceDir, "metadata.yaml"))
+	if err != nil {
+		return nil, fmt.Errorf("reading metadata.yaml: %w", err)
+	}
+	var metaDoc map[string]interface{}
+	if err := yaml.Unmarshal(origMeta, &metaDoc); err != nil {
+		return nil, fmt.Errorf("parsing metadata.yaml: %w", err)
+	}
+	metaDoc["type"] = metadataType
+
+	newMeta, err := yaml.Marshal(metaDoc)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling metadata.yaml: %w", err)
+	}
+	metaPath := filepath.ToSlash(filepath.Join(base, "metadata.yaml"))
+	f, err := w.Create(metaPath)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := f.Write(newMeta); err != nil {
+		return nil, err
+	}
+
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // zipDirectoryWithOverrides creates a ZIP of sourceDir, applying database overrides to databases/*.yaml.
