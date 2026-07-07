@@ -41,14 +41,17 @@ type datasetImportResourceModel struct {
 	FileHashes        types.Map    `tfsdk:"file_hashes"`
 }
 
+// Prefixes included in the dataset import ZIP.
+var datasetImportPrefixes = []string{"datasets/", "databases/"}
+
 func (r *datasetImportResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_dataset_import"
 }
 
 func (r *datasetImportResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Imports deduplicated datasets from one or more dashboard export directories via POST /api/v1/dataset/import/. " +
-			"This endpoint properly respects overwrite=true, unlike the dashboard import endpoint.",
+		Description: "Imports datasets from a dashboard export directory via POST /api/v1/dataset/import/. " +
+			"This endpoint properly respects overwrite=true for datasets.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "Identifier for this resource (derived from source_dir).",
@@ -58,9 +61,8 @@ func (r *datasetImportResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 			"source_dir": schema.StringAttribute{
-				Description: "Path to a parent directory containing one or more dashboard export subdirectories. " +
-					"Each subdirectory should contain datasets/, databases/, etc.",
-				Required: true,
+				Description: "Path to a dashboard export directory containing datasets/, databases/, and metadata.yaml.",
+				Required:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -86,7 +88,7 @@ func (r *datasetImportResource) Schema(_ context.Context, _ resource.SchemaReque
 				ElementType: types.StringType,
 			},
 			"file_hashes": schema.MapAttribute{
-				Description: "Map of deduplicated file path to SHA256 hash. Changes trigger re-import.",
+				Description: "Map of file path to SHA256 hash. Changes trigger re-import.",
 				Computed:    true,
 				ElementType: types.StringType,
 			},
@@ -124,13 +126,11 @@ func (r *datasetImportResource) ModifyPlan(ctx context.Context, req resource.Mod
 	}
 
 	overrides := parseDatabaseOverrides(ctx, plan.DatabaseOverrides)
-	collected, err := collectDedupedFiles(sourceDir, []string{"datasets", "databases"}, overrides)
+	newHashes, err := computeFilteredFileHashes(sourceDir, datasetImportPrefixes, overrides)
 	if err != nil {
 		resp.Diagnostics.AddWarning("Cannot compute file hashes", err.Error())
 		return
 	}
-
-	newHashes := hashCollectedFiles(collected)
 
 	if req.State.Raw.IsNull() {
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("file_hashes"), toStringMap(newHashes))...)
@@ -172,7 +172,6 @@ func (r *datasetImportResource) Read(ctx context.Context, req resource.ReadReque
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// Dataset import is a bulk operation — no remote object to verify.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -199,7 +198,8 @@ func (r *datasetImportResource) Update(ctx context.Context, req resource.UpdateR
 }
 
 func (r *datasetImportResource) Delete(_ context.Context, _ resource.DeleteRequest, _ *resource.DeleteResponse) {
-	// Datasets are not deleted when this resource is removed — they remain in Superset.
+	// Datasets are not deleted — they are shared dependencies that may be
+	// referenced by charts and dashboards outside this resource's scope.
 }
 
 func (r *datasetImportResource) doImport(ctx context.Context, plan *datasetImportResourceModel) error {
@@ -208,12 +208,11 @@ func (r *datasetImportResource) doImport(ctx context.Context, plan *datasetImpor
 
 	overrides := parseDatabaseOverrides(ctx, plan.DatabaseOverrides)
 
-	collected, err := collectDedupedFiles(sourceDir, []string{"datasets", "databases"}, overrides)
+	hashes, err := computeFilteredFileHashes(sourceDir, datasetImportPrefixes, overrides)
 	if err != nil {
-		return fmt.Errorf("collecting dataset files: %w", err)
+		return fmt.Errorf("computing file hashes: %w", err)
 	}
-
-	plan.FileHashes = toStringMap(hashCollectedFiles(collected))
+	plan.FileHashes = toStringMap(hashes)
 
 	secrets := make(map[string]string)
 	if !plan.DatabaseSecrets.IsNull() && !plan.DatabaseSecrets.IsUnknown() {
@@ -222,21 +221,23 @@ func (r *datasetImportResource) doImport(ctx context.Context, plan *datasetImpor
 			return fmt.Errorf("reading database_secrets")
 		}
 	}
-
-	passwordMap := buildPasswordMapFromCollected(collected, secrets)
+	passwordMap, err := buildPasswordMap(sourceDir, secrets)
+	if err != nil {
+		return fmt.Errorf("building password map: %w", err)
+	}
 	passwords := ""
 	if len(passwordMap) > 0 {
 		b, _ := json.Marshal(passwordMap)
 		passwords = string(b)
 	}
 
-	zipData, err := buildImportZip(collected, "SqlaTable", sourceDir)
+	zipData, err := zipDirectoryFiltered(sourceDir, overrides, datasetImportPrefixes, "SqlaTable")
 	if err != nil {
-		return fmt.Errorf("building ZIP: %w", err)
+		return fmt.Errorf("creating ZIP: %w", err)
 	}
 
 	overwrite := plan.ForceOverwrite.ValueBool()
-	tflog.Info(ctx, fmt.Sprintf("Importing %d deduplicated dataset files from %s (overwrite=%v)", len(collected), sourceDir, overwrite))
+	tflog.Info(ctx, fmt.Sprintf("Importing datasets from %s (overwrite=%v)", sourceDir, overwrite))
 
 	if err := r.client.ImportDataset(zipData, overwrite, passwords); err != nil {
 		return err

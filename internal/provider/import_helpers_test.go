@@ -5,225 +5,188 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func setupTestDashboardDirs(t *testing.T) string {
+func setupTestExportDir(t *testing.T) string {
 	t.Helper()
 
-	// Create a temp directory structure simulating multiple dashboard exports
+	// Simulate a single dashboard export directory
 	root := t.TempDir()
 
-	// Dashboard 1
-	dash1Dir := filepath.Join(root, "dashboard_one")
-	require.NoError(t, os.MkdirAll(filepath.Join(dash1Dir, "datasets", "db_alpha"), 0755))
-	require.NoError(t, os.MkdirAll(filepath.Join(dash1Dir, "databases"), 0755))
-	require.NoError(t, os.MkdirAll(filepath.Join(dash1Dir, "charts"), 0755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "datasets", "db_alpha"), 0755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "databases"), 0755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "charts"), 0755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "dashboards"), 0755))
 
-	require.NoError(t, os.WriteFile(filepath.Join(dash1Dir, "metadata.yaml"),
+	require.NoError(t, os.WriteFile(filepath.Join(root, "metadata.yaml"),
 		[]byte("version: 1.0.0\ntype: Dashboard\ntimestamp: '2024-01-01T00:00:00+00:00'\n"), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(dash1Dir, "datasets", "db_alpha", "dataset_a.yaml"),
+	require.NoError(t, os.WriteFile(filepath.Join(root, "datasets", "db_alpha", "dataset_a.yaml"),
 		[]byte("table_name: dataset_a\nuuid: aaaa-1111\ndatabase_uuid: db-uuid-1\n"), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(dash1Dir, "datasets", "db_alpha", "shared_dataset.yaml"),
-		[]byte("table_name: shared_dataset\nuuid: shared-uuid\ndatabase_uuid: db-uuid-1\n"), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(dash1Dir, "databases", "db_alpha.yaml"),
-		[]byte("database_name: db_alpha\nuuid: db-uuid-1\n"), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(dash1Dir, "charts", "chart_a.yaml"),
-		[]byte("slice_name: Chart A\nuuid: chart-a-uuid\n"), 0644))
-
-	// Dashboard 2 (shares a dataset with dashboard 1)
-	dash2Dir := filepath.Join(root, "dashboard_two")
-	require.NoError(t, os.MkdirAll(filepath.Join(dash2Dir, "datasets", "db_alpha"), 0755))
-	require.NoError(t, os.MkdirAll(filepath.Join(dash2Dir, "databases"), 0755))
-	require.NoError(t, os.MkdirAll(filepath.Join(dash2Dir, "charts"), 0755))
-
-	require.NoError(t, os.WriteFile(filepath.Join(dash2Dir, "metadata.yaml"),
-		[]byte("version: 1.0.0\ntype: Dashboard\ntimestamp: '2024-01-01T00:00:00+00:00'\n"), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(dash2Dir, "datasets", "db_alpha", "dataset_b.yaml"),
+	require.NoError(t, os.WriteFile(filepath.Join(root, "datasets", "db_alpha", "dataset_b.yaml"),
 		[]byte("table_name: dataset_b\nuuid: bbbb-2222\ndatabase_uuid: db-uuid-1\n"), 0644))
-	// Same file path as dashboard 1 — should be deduplicated
-	require.NoError(t, os.WriteFile(filepath.Join(dash2Dir, "datasets", "db_alpha", "shared_dataset.yaml"),
-		[]byte("table_name: shared_dataset\nuuid: shared-uuid\ndatabase_uuid: db-uuid-1\n"), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(dash2Dir, "databases", "db_alpha.yaml"),
+	require.NoError(t, os.WriteFile(filepath.Join(root, "databases", "db_alpha.yaml"),
 		[]byte("database_name: db_alpha\nuuid: db-uuid-1\n"), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(dash2Dir, "charts", "chart_b.yaml"),
-		[]byte("slice_name: Chart B\nuuid: chart-b-uuid\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "charts", "chart_a.yaml"),
+		[]byte("slice_name: Chart A\nuuid: chart-a-uuid\ndataset_uuid: aaaa-1111\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "charts", "chart_b.yaml"),
+		[]byte("slice_name: Chart B\nuuid: chart-b-uuid\ndataset_uuid: bbbb-2222\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "dashboards", "my_dashboard.yaml"),
+		[]byte("dashboard_title: My Dashboard\nuuid: dash-uuid-1\n"), 0644))
 
 	return root
 }
 
-func TestCollectDedupedFiles_Datasets(t *testing.T) {
-	root := setupTestDashboardDirs(t)
+func TestComputeFilteredFileHashes_Datasets(t *testing.T) {
+	root := setupTestExportDir(t)
 
-	collected, err := collectDedupedFiles(root, []string{"datasets", "databases"}, nil)
+	hashes, err := computeFilteredFileHashes(root, []string{"datasets/", "databases/"}, nil)
 	require.NoError(t, err)
 
-	// Should have: 3 unique datasets + 1 database = 4 files
-	// shared_dataset.yaml appears in both dashboards but should be deduped
-	paths := make(map[string]bool)
-	for _, f := range collected {
-		paths[f.RelPath] = true
-	}
-
-	assert.True(t, paths["datasets/db_alpha/dataset_a.yaml"], "dataset_a should be collected")
-	assert.True(t, paths["datasets/db_alpha/shared_dataset.yaml"], "shared_dataset should be collected")
-	assert.True(t, paths["datasets/db_alpha/dataset_b.yaml"], "dataset_b should be collected")
-	assert.True(t, paths["databases/db_alpha.yaml"], "database should be collected")
-	assert.Equal(t, 4, len(collected), "should have exactly 4 deduplicated files")
+	// Should include datasets and databases, not charts or dashboards
+	assert.Contains(t, hashes, "datasets/db_alpha/dataset_a.yaml")
+	assert.Contains(t, hashes, "datasets/db_alpha/dataset_b.yaml")
+	assert.Contains(t, hashes, "databases/db_alpha.yaml")
+	assert.NotContains(t, hashes, "charts/chart_a.yaml")
+	assert.NotContains(t, hashes, "dashboards/my_dashboard.yaml")
+	assert.Equal(t, 3, len(hashes))
 }
 
-func TestCollectDedupedFiles_Charts(t *testing.T) {
-	root := setupTestDashboardDirs(t)
+func TestComputeFilteredFileHashes_Charts(t *testing.T) {
+	root := setupTestExportDir(t)
 
-	collected, err := collectDedupedFiles(root, []string{"charts", "datasets", "databases"}, nil)
+	hashes, err := computeFilteredFileHashes(root, []string{"charts/", "datasets/", "databases/"}, nil)
 	require.NoError(t, err)
 
-	paths := make(map[string]bool)
-	for _, f := range collected {
-		paths[f.RelPath] = true
-	}
-
-	// 2 charts + 3 datasets + 1 database = 6 files
-	assert.True(t, paths["charts/chart_a.yaml"])
-	assert.True(t, paths["charts/chart_b.yaml"])
-	assert.True(t, paths["datasets/db_alpha/dataset_a.yaml"])
-	assert.True(t, paths["datasets/db_alpha/shared_dataset.yaml"])
-	assert.True(t, paths["datasets/db_alpha/dataset_b.yaml"])
-	assert.True(t, paths["databases/db_alpha.yaml"])
-	assert.Equal(t, 6, len(collected))
+	assert.Contains(t, hashes, "charts/chart_a.yaml")
+	assert.Contains(t, hashes, "charts/chart_b.yaml")
+	assert.Contains(t, hashes, "datasets/db_alpha/dataset_a.yaml")
+	assert.Contains(t, hashes, "datasets/db_alpha/dataset_b.yaml")
+	assert.Contains(t, hashes, "databases/db_alpha.yaml")
+	assert.NotContains(t, hashes, "dashboards/my_dashboard.yaml")
+	assert.Equal(t, 5, len(hashes))
 }
 
-func TestCollectDedupedFiles_DatabaseOverrides(t *testing.T) {
-	root := setupTestDashboardDirs(t)
+func TestComputeFilteredFileHashes_DatabaseOverrides(t *testing.T) {
+	root := setupTestExportDir(t)
 
 	overrides := map[string]map[string]interface{}{
-		"db-uuid-1": {
-			"sqlalchemy_uri": "starrocks://new-host:9030",
-		},
+		"db-uuid-1": {"sqlalchemy_uri": "starrocks://new-host:9030"},
 	}
 
-	collected, err := collectDedupedFiles(root, []string{"databases"}, overrides)
+	hashes, err := computeFilteredFileHashes(root, []string{"databases/"}, overrides)
 	require.NoError(t, err)
 
-	require.Equal(t, 1, len(collected))
-	assert.Contains(t, string(collected[0].Data), "starrocks://new-host:9030")
+	// Hash should differ from the non-overridden version
+	hashesNoOverride, _ := computeFilteredFileHashes(root, []string{"databases/"}, nil)
+	assert.NotEqual(t, hashes["databases/db_alpha.yaml"], hashesNoOverride["databases/db_alpha.yaml"])
 }
 
-func TestHashCollectedFiles(t *testing.T) {
-	files := []collectedFile{
-		{RelPath: "a.yaml", Data: []byte("hello")},
-		{RelPath: "b.yaml", Data: []byte("world")},
-	}
+func TestZipDirectoryFiltered_Datasets(t *testing.T) {
+	root := setupTestExportDir(t)
 
-	hashes := hashCollectedFiles(files)
-
-	assert.Equal(t, 2, len(hashes))
-	assert.NotEmpty(t, hashes["a.yaml"])
-	assert.NotEmpty(t, hashes["b.yaml"])
-	assert.NotEqual(t, hashes["a.yaml"], hashes["b.yaml"])
-
-	// Same content should produce same hash
-	files2 := []collectedFile{
-		{RelPath: "a.yaml", Data: []byte("hello")},
-	}
-	hashes2 := hashCollectedFiles(files2)
-	assert.Equal(t, hashes["a.yaml"], hashes2["a.yaml"])
-}
-
-func TestBuildPasswordMapFromCollected(t *testing.T) {
-	files := []collectedFile{
-		{RelPath: "databases/db_alpha.yaml", Data: []byte("database_name: db_alpha\nuuid: db-uuid-1\n")},
-		{RelPath: "databases/db_beta.yaml", Data: []byte("database_name: db_beta\nuuid: db-uuid-2\n")},
-		{RelPath: "datasets/db_alpha/test.yaml", Data: []byte("table_name: test\n")},
-	}
-
-	secrets := map[string]string{
-		"db-uuid-1": "secret123",
-	}
-
-	passwordMap := buildPasswordMapFromCollected(files, secrets)
-
-	assert.Equal(t, "secret123", passwordMap["databases/db_alpha.yaml"])
-	assert.Equal(t, "", passwordMap["databases/db_beta.yaml"])
-	assert.NotContains(t, passwordMap, "datasets/db_alpha/test.yaml")
-}
-
-func TestBuildPasswordMapFromCollected_NoSecrets(t *testing.T) {
-	files := []collectedFile{
-		{RelPath: "databases/db_alpha.yaml", Data: []byte("database_name: db_alpha\nuuid: db-uuid-1\n")},
-	}
-
-	passwordMap := buildPasswordMapFromCollected(files, map[string]string{})
-	assert.Nil(t, passwordMap)
-}
-
-func TestBuildImportZip(t *testing.T) {
-	root := setupTestDashboardDirs(t)
-
-	files := []collectedFile{
-		{RelPath: "datasets/db_alpha/dataset_a.yaml", Data: []byte("table_name: dataset_a\n")},
-		{RelPath: "databases/db_alpha.yaml", Data: []byte("database_name: db_alpha\n")},
-	}
-
-	zipData, err := buildImportZip(files, "SqlaTable", root)
+	zipData, err := zipDirectoryFiltered(root, nil, []string{"datasets/", "databases/"}, "SqlaTable")
 	require.NoError(t, err)
 	require.NotEmpty(t, zipData)
 
-	// Read the ZIP and verify contents
 	reader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
 	require.NoError(t, err)
 
-	zipPaths := make(map[string]bool)
-	var metadataContent []byte
+	// Collect paths relative to the ZIP root dir
+	var relPaths []string
 	for _, f := range reader.File {
-		zipPaths[f.Name] = true
-		if f.Name == "import_export/metadata.yaml" {
-			rc, err := f.Open()
-			require.NoError(t, err)
-			metadataContent = make([]byte, f.UncompressedSize64)
-			_, err = rc.Read(metadataContent)
-			rc.Close()
+		// Strip the root dir prefix (e.g. "tmpdir123/datasets/..." -> "datasets/...")
+		parts := strings.SplitN(f.Name, "/", 2)
+		if len(parts) == 2 && parts[1] != "" {
+			relPaths = append(relPaths, parts[1])
 		}
 	}
 
-	assert.True(t, zipPaths["import_export/"])
-	assert.True(t, zipPaths["import_export/datasets/"])
-	assert.True(t, zipPaths["import_export/datasets/db_alpha/"])
-	assert.True(t, zipPaths["import_export/datasets/db_alpha/dataset_a.yaml"])
-	assert.True(t, zipPaths["import_export/databases/"])
-	assert.True(t, zipPaths["import_export/databases/db_alpha.yaml"])
-	assert.True(t, zipPaths["import_export/metadata.yaml"])
-
-	// Verify metadata has correct type
-	assert.Contains(t, string(metadataContent), "SqlaTable")
+	assert.Contains(t, relPaths, "datasets/db_alpha/dataset_a.yaml")
+	assert.Contains(t, relPaths, "datasets/db_alpha/dataset_b.yaml")
+	assert.Contains(t, relPaths, "databases/db_alpha.yaml")
+	assert.Contains(t, relPaths, "metadata.yaml")
+	assert.NotContains(t, relPaths, "charts/chart_a.yaml")
+	assert.NotContains(t, relPaths, "dashboards/my_dashboard.yaml")
 }
 
-func TestBuildImportZip_ChartType(t *testing.T) {
-	root := setupTestDashboardDirs(t)
+func TestZipDirectoryFiltered_Charts(t *testing.T) {
+	root := setupTestExportDir(t)
 
-	files := []collectedFile{
-		{RelPath: "charts/chart_a.yaml", Data: []byte("slice_name: Chart A\n")},
+	zipData, err := zipDirectoryFiltered(root, nil, []string{"charts/", "datasets/", "databases/"}, "Slice")
+	require.NoError(t, err)
+
+	reader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
+	require.NoError(t, err)
+
+	var relPaths []string
+	for _, f := range reader.File {
+		parts := strings.SplitN(f.Name, "/", 2)
+		if len(parts) == 2 && parts[1] != "" {
+			relPaths = append(relPaths, parts[1])
+		}
 	}
 
-	zipData, err := buildImportZip(files, "Slice", root)
+	assert.Contains(t, relPaths, "charts/chart_a.yaml")
+	assert.Contains(t, relPaths, "charts/chart_b.yaml")
+	assert.Contains(t, relPaths, "datasets/db_alpha/dataset_a.yaml")
+	assert.Contains(t, relPaths, "databases/db_alpha.yaml")
+	assert.Contains(t, relPaths, "metadata.yaml")
+	assert.NotContains(t, relPaths, "dashboards/my_dashboard.yaml")
+}
+
+func TestZipDirectoryFiltered_MetadataType(t *testing.T) {
+	root := setupTestExportDir(t)
+
+	zipData, err := zipDirectoryFiltered(root, nil, []string{"datasets/", "databases/"}, "SqlaTable")
 	require.NoError(t, err)
 
 	reader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
 	require.NoError(t, err)
 
 	for _, f := range reader.File {
-		if f.Name == "import_export/metadata.yaml" {
+		if strings.HasSuffix(f.Name, "/metadata.yaml") {
 			rc, err := f.Open()
 			require.NoError(t, err)
 			buf := make([]byte, 1024)
 			n, _ := rc.Read(buf)
 			rc.Close()
-			assert.Contains(t, string(buf[:n]), "Slice")
+			content := string(buf[:n])
+			assert.Contains(t, content, "SqlaTable")
+			assert.NotContains(t, content, "Dashboard")
 			return
 		}
 	}
 	t.Fatal("metadata.yaml not found in ZIP")
+}
+
+func TestZipDirectoryFiltered_DatabaseOverrides(t *testing.T) {
+	root := setupTestExportDir(t)
+
+	overrides := map[string]map[string]interface{}{
+		"db-uuid-1": {"sqlalchemy_uri": "starrocks://overridden:9030"},
+	}
+
+	zipData, err := zipDirectoryFiltered(root, overrides, []string{"databases/"}, "SqlaTable")
+	require.NoError(t, err)
+
+	reader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
+	require.NoError(t, err)
+
+	for _, f := range reader.File {
+		if strings.HasSuffix(f.Name, "/databases/db_alpha.yaml") {
+			rc, err := f.Open()
+			require.NoError(t, err)
+			buf := make([]byte, 1024)
+			n, _ := rc.Read(buf)
+			rc.Close()
+			assert.Contains(t, string(buf[:n]), "starrocks://overridden:9030")
+			return
+		}
+	}
+	t.Fatal("database file not found in ZIP")
 }

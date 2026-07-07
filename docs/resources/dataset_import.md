@@ -2,20 +2,20 @@
 page_title: "superset_dataset_import Resource - superset"
 subcategory: ""
 description: |-
-  Imports deduplicated datasets from one or more dashboard export directories via POST /api/v1/dataset/import/.
+  Imports datasets from a dashboard export directory via POST /api/v1/dataset/import/.
 ---
 
 # superset_dataset_import (Resource)
 
-Imports deduplicated datasets from one or more dashboard export directories via `POST /api/v1/dataset/import/`. This endpoint properly respects `overwrite=true`, unlike the dashboard import endpoint which hardcodes `overwrite=False` for datasets.
+Imports datasets from a dashboard export directory via `POST /api/v1/dataset/import/`. This endpoint properly respects `overwrite=true`, unlike the dashboard import endpoint which hardcodes `overwrite=False` for datasets.
 
-The resource walks all subdirectories in `source_dir`, collects `datasets/` and `databases/` files, deduplicates them by relative file path, and imports them in a single API call.
+The resource reads `datasets/` and `databases/` from the specified `source_dir`, builds a ZIP with a generated `metadata.yaml` (type: SqlaTable), and imports via the dedicated Superset endpoint.
 
 ## Example Usage
 
 ```terraform
-resource "superset_dataset_import" "all" {
-  source_dir      = "${path.module}/dashboards"
+resource "superset_dataset_import" "example" {
+  source_dir      = "${path.module}/dashboards/athena_usage"
   force_overwrite = true
 
   database_secrets = {
@@ -35,20 +35,20 @@ resource "superset_dataset_import" "all" {
 Use `depends_on` to enforce the correct import order:
 
 ```terraform
-resource "superset_dataset_import" "all" {
-  source_dir = "${path.module}/dashboards"
+resource "superset_dataset_import" "example" {
+  source_dir = "${path.module}/dashboards/athena_usage"
   # ...
 }
 
-resource "superset_chart_import" "all" {
-  source_dir = "${path.module}/dashboards"
-  depends_on = [superset_dataset_import.all]
+resource "superset_chart_import" "example" {
+  source_dir = "${path.module}/dashboards/athena_usage"
+  depends_on = [superset_dataset_import.example]
   # ...
 }
 
-resource "superset_dashboard_import" "my_dashboard" {
-  source_dir = "${path.module}/dashboards/my_dashboard"
-  depends_on = [superset_chart_import.all]
+resource "superset_dashboard_import" "example" {
+  source_dir = "${path.module}/dashboards/athena_usage"
+  depends_on = [superset_chart_import.example]
   # ...
 }
 ```
@@ -58,7 +58,7 @@ resource "superset_dashboard_import" "my_dashboard" {
 
 ### Required
 
-- `source_dir` (String) Path to a parent directory containing one or more dashboard export subdirectories. Each subdirectory should contain datasets/, databases/, etc.
+- `source_dir` (String) Path to a dashboard export directory containing datasets/, databases/, and metadata.yaml.
 
 ### Optional
 
@@ -68,11 +68,10 @@ resource "superset_dashboard_import" "my_dashboard" {
 
 ### Read-Only
 
-- `file_hashes` (Map of String) Map of deduplicated file path to SHA256 hash. Changes trigger re-import.
+- `file_hashes` (Map of String) Map of file path to SHA256 hash. Changes trigger re-import.
 - `id` (String) Identifier for this resource (derived from source_dir).
 
 ## Behavior
 
-- **Deduplication**: If the same dataset file (by relative path) exists in multiple dashboard subdirectories, it is imported only once.
 - **Delete**: Removing this resource from config does not delete datasets from Superset. Datasets are shared dependencies — they may be referenced by charts and dashboards outside this resource's scope, so deleting them would be destructive and unsafe.
 - **Change detection**: The resource tracks SHA256 hashes of all collected files. Any file change triggers a reimport on the next apply.

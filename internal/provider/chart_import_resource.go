@@ -41,14 +41,17 @@ type chartImportResourceModel struct {
 	FileHashes        types.Map    `tfsdk:"file_hashes"`
 }
 
+// Prefixes included in the chart import ZIP.
+var chartImportPrefixes = []string{"charts/", "datasets/", "databases/"}
+
 func (r *chartImportResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_chart_import"
 }
 
 func (r *chartImportResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Imports deduplicated charts from one or more dashboard export directories via POST /api/v1/chart/import/. " +
-			"This endpoint properly respects overwrite=true, unlike the dashboard import endpoint.",
+		Description: "Imports charts from a dashboard export directory via POST /api/v1/chart/import/. " +
+			"This endpoint properly respects overwrite=true for charts.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "Identifier for this resource (derived from source_dir).",
@@ -58,9 +61,8 @@ func (r *chartImportResource) Schema(_ context.Context, _ resource.SchemaRequest
 				},
 			},
 			"source_dir": schema.StringAttribute{
-				Description: "Path to a parent directory containing one or more dashboard export subdirectories. " +
-					"Each subdirectory should contain charts/, datasets/, databases/, etc.",
-				Required: true,
+				Description: "Path to a dashboard export directory containing charts/, datasets/, databases/, and metadata.yaml.",
+				Required:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -86,7 +88,7 @@ func (r *chartImportResource) Schema(_ context.Context, _ resource.SchemaRequest
 				ElementType: types.StringType,
 			},
 			"file_hashes": schema.MapAttribute{
-				Description: "Map of deduplicated file path to SHA256 hash. Changes trigger re-import.",
+				Description: "Map of file path to SHA256 hash. Changes trigger re-import.",
 				Computed:    true,
 				ElementType: types.StringType,
 			},
@@ -124,13 +126,11 @@ func (r *chartImportResource) ModifyPlan(ctx context.Context, req resource.Modif
 	}
 
 	overrides := parseDatabaseOverrides(ctx, plan.DatabaseOverrides)
-	collected, err := collectDedupedFiles(sourceDir, []string{"charts", "datasets", "databases"}, overrides)
+	newHashes, err := computeFilteredFileHashes(sourceDir, chartImportPrefixes, overrides)
 	if err != nil {
 		resp.Diagnostics.AddWarning("Cannot compute file hashes", err.Error())
 		return
 	}
-
-	newHashes := hashCollectedFiles(collected)
 
 	if req.State.Raw.IsNull() {
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("file_hashes"), toStringMap(newHashes))...)
@@ -172,7 +172,6 @@ func (r *chartImportResource) Read(ctx context.Context, req resource.ReadRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// Chart import is a bulk operation — no remote object to verify.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -199,7 +198,8 @@ func (r *chartImportResource) Update(ctx context.Context, req resource.UpdateReq
 }
 
 func (r *chartImportResource) Delete(_ context.Context, _ resource.DeleteRequest, _ *resource.DeleteResponse) {
-	// Charts are not deleted when this resource is removed — they remain in Superset.
+	// Charts are not deleted — they are shared dependencies that may be
+	// referenced by multiple dashboards outside this resource's scope.
 }
 
 func (r *chartImportResource) doImport(ctx context.Context, plan *chartImportResourceModel) error {
@@ -208,12 +208,11 @@ func (r *chartImportResource) doImport(ctx context.Context, plan *chartImportRes
 
 	overrides := parseDatabaseOverrides(ctx, plan.DatabaseOverrides)
 
-	collected, err := collectDedupedFiles(sourceDir, []string{"charts", "datasets", "databases"}, overrides)
+	hashes, err := computeFilteredFileHashes(sourceDir, chartImportPrefixes, overrides)
 	if err != nil {
-		return fmt.Errorf("collecting chart files: %w", err)
+		return fmt.Errorf("computing file hashes: %w", err)
 	}
-
-	plan.FileHashes = toStringMap(hashCollectedFiles(collected))
+	plan.FileHashes = toStringMap(hashes)
 
 	secrets := make(map[string]string)
 	if !plan.DatabaseSecrets.IsNull() && !plan.DatabaseSecrets.IsUnknown() {
@@ -222,21 +221,23 @@ func (r *chartImportResource) doImport(ctx context.Context, plan *chartImportRes
 			return fmt.Errorf("reading database_secrets")
 		}
 	}
-
-	passwordMap := buildPasswordMapFromCollected(collected, secrets)
+	passwordMap, err := buildPasswordMap(sourceDir, secrets)
+	if err != nil {
+		return fmt.Errorf("building password map: %w", err)
+	}
 	passwords := ""
 	if len(passwordMap) > 0 {
 		b, _ := json.Marshal(passwordMap)
 		passwords = string(b)
 	}
 
-	zipData, err := buildImportZip(collected, "Slice", sourceDir)
+	zipData, err := zipDirectoryFiltered(sourceDir, overrides, chartImportPrefixes, "Slice")
 	if err != nil {
-		return fmt.Errorf("building ZIP: %w", err)
+		return fmt.Errorf("creating ZIP: %w", err)
 	}
 
 	overwrite := plan.ForceOverwrite.ValueBool()
-	tflog.Info(ctx, fmt.Sprintf("Importing %d deduplicated chart files from %s (overwrite=%v)", len(collected), sourceDir, overwrite))
+	tflog.Info(ctx, fmt.Sprintf("Importing charts from %s (overwrite=%v)", sourceDir, overwrite))
 
 	if err := r.client.ImportChart(zipData, overwrite, passwords); err != nil {
 		return err
