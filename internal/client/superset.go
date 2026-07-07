@@ -1094,6 +1094,23 @@ func (c *Client) GetDatabaseNameByID(databaseID int64) (string, error) {
 // ImportDashboard imports a dashboard from a ZIP file.
 // passwords is a JSON string mapping "databases/file.yaml" to password.
 func (c *Client) ImportDashboard(zipData []byte, overwrite bool, passwords string) error {
+	return c.importViaEndpoint("/api/v1/dashboard/import/", zipData, overwrite, passwords)
+}
+
+// ImportDataset imports datasets from a ZIP file via the dataset import endpoint.
+// This endpoint properly respects overwrite=true for datasets.
+func (c *Client) ImportDataset(zipData []byte, overwrite bool, passwords string) error {
+	return c.importViaEndpoint("/api/v1/dataset/import/", zipData, overwrite, passwords)
+}
+
+// ImportChart imports charts from a ZIP file via the chart import endpoint.
+// This endpoint properly respects overwrite=true for charts.
+func (c *Client) ImportChart(zipData []byte, overwrite bool, passwords string) error {
+	return c.importViaEndpoint("/api/v1/chart/import/", zipData, overwrite, passwords)
+}
+
+// importViaEndpoint is a shared helper that posts a ZIP to any Superset import endpoint.
+func (c *Client) importViaEndpoint(endpoint string, zipData []byte, overwrite bool, passwords string) error {
 	csrfToken, cookies, err := c.GetCSRFToken()
 	if err != nil {
 		return err
@@ -1102,7 +1119,7 @@ func (c *Client) ImportDashboard(zipData []byte, overwrite bool, passwords strin
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
-	part, err := writer.CreateFormFile("formData", "dashboard_export.zip")
+	part, err := writer.CreateFormFile("formData", "export.zip")
 	if err != nil {
 		return err
 	}
@@ -1118,7 +1135,7 @@ func (c *Client) ImportDashboard(zipData []byte, overwrite bool, passwords strin
 	}
 	writer.Close()
 
-	url := fmt.Sprintf("%s/api/v1/dashboard/import/", c.Host)
+	url := fmt.Sprintf("%s%s", c.Host, endpoint)
 	req, err := http.NewRequest("POST", url, &body)
 	if err != nil {
 		return err
@@ -1143,7 +1160,7 @@ func (c *Client) ImportDashboard(zipData []byte, overwrite bool, passwords strin
 	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to import dashboard, status code: %d, response: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("import failed at %s, status code: %d, response: %s", endpoint, resp.StatusCode, string(respBody))
 	}
 
 	return nil
