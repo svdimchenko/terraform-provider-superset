@@ -19,9 +19,10 @@ import (
 )
 
 var (
-	_ resource.Resource               = &datasetImportResource{}
-	_ resource.ResourceWithConfigure  = &datasetImportResource{}
-	_ resource.ResourceWithModifyPlan = &datasetImportResource{}
+	_ resource.Resource                = &datasetImportResource{}
+	_ resource.ResourceWithConfigure   = &datasetImportResource{}
+	_ resource.ResourceWithModifyPlan  = &datasetImportResource{}
+	_ resource.ResourceWithImportState = &datasetImportResource{}
 )
 
 func NewDatasetImportResource() resource.Resource {
@@ -228,6 +229,21 @@ func (r *datasetImportResource) Delete(ctx context.Context, req resource.DeleteR
 				fmt.Sprintf("Dataset %d (UUID %s): %s", id, uuid, err))
 		}
 	}
+}
+
+func (r *datasetImportResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	sourceDir := req.ID
+
+	hashes, err := computeFilteredFileHashes(sourceDir, datasetImportPrefixes, nil)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to compute file hashes", err.Error())
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), fmt.Sprintf("dataset-import:%s", sourceDir))...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("source_dir"), sourceDir)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("force_overwrite"), true)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("file_hashes"), toStringMap(hashes))...)
 }
 
 func (r *datasetImportResource) doImport(ctx context.Context, plan *datasetImportResourceModel) error {

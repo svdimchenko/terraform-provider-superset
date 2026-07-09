@@ -49,3 +49,11 @@ resource "superset_chart_import" "example" {
 
 - `file_hashes` (Map of String) Map of file path to SHA256 hash. Changes trigger re-import.
 - `id` (String) Identifier for this resource (derived from source_dir).
+
+## Import
+
+Import by specifying the path to the dashboard export directory:
+
+```shell
+terraform import superset_chart_import.example ./dashboards/athena_usage
+```

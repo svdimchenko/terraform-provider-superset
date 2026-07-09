@@ -19,9 +19,10 @@ import (
 )
 
 var (
-	_ resource.Resource               = &chartImportResource{}
-	_ resource.ResourceWithConfigure  = &chartImportResource{}
-	_ resource.ResourceWithModifyPlan = &chartImportResource{}
+	_ resource.Resource                = &chartImportResource{}
+	_ resource.ResourceWithConfigure   = &chartImportResource{}
+	_ resource.ResourceWithModifyPlan  = &chartImportResource{}
+	_ resource.ResourceWithImportState = &chartImportResource{}
 )
 
 func NewChartImportResource() resource.Resource {
@@ -228,6 +229,21 @@ func (r *chartImportResource) Delete(ctx context.Context, req resource.DeleteReq
 				fmt.Sprintf("Chart %d (UUID %s): %s", id, uuid, err))
 		}
 	}
+}
+
+func (r *chartImportResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	sourceDir := req.ID
+
+	hashes, err := computeFilteredFileHashes(sourceDir, chartImportPrefixes, nil)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to compute file hashes", err.Error())
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), fmt.Sprintf("chart-import:%s", sourceDir))...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("source_dir"), sourceDir)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("force_overwrite"), true)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("file_hashes"), toStringMap(hashes))...)
 }
 
 func (r *chartImportResource) doImport(ctx context.Context, plan *chartImportResourceModel) error {
