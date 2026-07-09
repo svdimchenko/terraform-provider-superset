@@ -1055,6 +1055,91 @@ func (c *Client) DeleteDataset(id int64) error {
 	return nil
 }
 
+// GetDatasetIDByUUID finds a dataset ID by its UUID using the Superset API.
+// Returns 0 and nil if not found.
+func (c *Client) GetDatasetIDByUUID(uuid string) (int64, error) {
+	endpoint := fmt.Sprintf("/api/v1/dataset/?q=(filters:!((col:uuid,opr:eq,value:'%s')))", uuid)
+	resp, err := c.DoRequest("GET", endpoint, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("failed to fetch dataset by uuid %q, status code: %d, response: %s", uuid, resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Result []struct {
+			ID float64 `json:"id"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+	if len(result.Result) == 0 {
+		return 0, nil
+	}
+	return int64(result.Result[0].ID), nil
+}
+
+// GetChartIDByUUID finds a chart ID by its UUID using the Superset API.
+// Returns 0 and nil if not found.
+func (c *Client) GetChartIDByUUID(uuid string) (int64, error) {
+	endpoint := fmt.Sprintf("/api/v1/chart/?q=(filters:!((col:uuid,opr:eq,value:'%s')))", uuid)
+	resp, err := c.DoRequest("GET", endpoint, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("failed to fetch chart by uuid %q, status code: %d, response: %s", uuid, resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Result []struct {
+			ID float64 `json:"id"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+	if len(result.Result) == 0 {
+		return 0, nil
+	}
+	return int64(result.Result[0].ID), nil
+}
+
+// DeleteChart deletes a chart by ID.
+func (c *Client) DeleteChart(id int64) error {
+	csrfToken, cookies, err := c.GetCSRFToken()
+	if err != nil {
+		return err
+	}
+
+	headers := map[string]string{
+		"X-CSRFToken": csrfToken,
+		"Referer":     c.Host,
+	}
+
+	endpoint := fmt.Sprintf("/api/v1/chart/%d", id)
+	resp, err := c.DoRequestWithHeadersAndCookies("DELETE", endpoint, nil, headers, cookies)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to delete chart, status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
 // GetDatabaseIDByName finds database ID by name using cached database list.
 func (c *Client) GetDatabaseIDByName(databaseName string) (int64, error) {
 	databases, err := c.GetAllDatabases()

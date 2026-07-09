@@ -147,15 +147,16 @@ func buildMetadataFromDir(sourceDir string, metadataType string) ([]byte, error)
 	metaPath := filepath.Join(sourceDir, "metadata.yaml")
 	data, err := os.ReadFile(metaPath)
 	if err != nil {
-		// Fallback if no metadata.yaml exists
+		// Fallback if no metadata.yaml exists — not an error, just generate one
 		fallback := fmt.Sprintf("version: 1.0.0\ntype: %s\ntimestamp: '%s'\n", metadataType, time.Now().UTC().Format(time.RFC3339))
-		return []byte(fallback), nil
+		return []byte(fallback), nil //nolint:nilerr // intentional fallback
 	}
 
 	var doc map[string]interface{}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
+		// Fallback if metadata.yaml is malformed — generate a clean one
 		fallback := fmt.Sprintf("version: 1.0.0\ntype: %s\ntimestamp: '%s'\n", metadataType, time.Now().UTC().Format(time.RFC3339))
-		return []byte(fallback), nil
+		return []byte(fallback), nil //nolint:nilerr // intentional fallback
 	}
 
 	doc["type"] = metadataType
@@ -166,4 +167,39 @@ func buildMetadataFromDir(sourceDir string, metadataType string) ([]byte, error)
 		return nil, err
 	}
 	return out, nil
+}
+
+// readUUIDsFromDir reads all YAML files under sourceDir matching the given prefix
+// and extracts the "uuid" field from each. Used for deletion on destroy.
+func readUUIDsFromDir(sourceDir string, prefix string) ([]string, error) {
+	var uuids []string
+	targetDir := filepath.Join(sourceDir, filepath.FromSlash(strings.TrimSuffix(prefix, "/")))
+
+	if _, err := os.Stat(targetDir); os.IsNotExist(err) {
+		return nil, nil
+	}
+
+	err := filepath.WalkDir(targetDir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(p, ".yaml") {
+			return nil
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		var doc struct {
+			UUID string `yaml:"uuid"`
+		}
+		if err := yaml.Unmarshal(data, &doc); err == nil && doc.UUID != "" {
+			uuids = append(uuids, doc.UUID)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return uuids, nil
 }

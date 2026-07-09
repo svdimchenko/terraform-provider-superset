@@ -197,9 +197,37 @@ func (r *chartImportResource) Update(ctx context.Context, req resource.UpdateReq
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *chartImportResource) Delete(_ context.Context, _ resource.DeleteRequest, _ *resource.DeleteResponse) {
-	// Charts are not deleted — they are shared dependencies that may be
-	// referenced by multiple dashboards outside this resource's scope.
+func (r *chartImportResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state chartImportResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	sourceDir := state.SourceDir.ValueString()
+
+	// Read chart UUIDs from the source directory and delete them from Superset
+	uuids, err := readUUIDsFromDir(sourceDir, "charts/")
+	if err != nil {
+		tflog.Warn(ctx, fmt.Sprintf("Failed to read chart UUIDs for deletion: %s", err))
+		return
+	}
+
+	for _, uuid := range uuids {
+		id, err := r.client.GetChartIDByUUID(uuid)
+		if err != nil {
+			tflog.Warn(ctx, fmt.Sprintf("Failed to look up chart UUID %s: %s", uuid, err))
+			continue
+		}
+		if id == 0 {
+			continue
+		}
+		tflog.Info(ctx, fmt.Sprintf("Deleting chart %d (UUID %s)", id, uuid))
+		if err := r.client.DeleteChart(id); err != nil {
+			resp.Diagnostics.AddWarning("Failed to delete chart",
+				fmt.Sprintf("Chart %d (UUID %s): %s", id, uuid, err))
+		}
+	}
 }
 
 func (r *chartImportResource) doImport(ctx context.Context, plan *chartImportResourceModel) error {

@@ -197,9 +197,37 @@ func (r *datasetImportResource) Update(ctx context.Context, req resource.UpdateR
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *datasetImportResource) Delete(_ context.Context, _ resource.DeleteRequest, _ *resource.DeleteResponse) {
-	// Datasets are not deleted — they are shared dependencies that may be
-	// referenced by charts and dashboards outside this resource's scope.
+func (r *datasetImportResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state datasetImportResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	sourceDir := state.SourceDir.ValueString()
+
+	// Read dataset UUIDs from the source directory and delete them from Superset
+	uuids, err := readUUIDsFromDir(sourceDir, "datasets/")
+	if err != nil {
+		tflog.Warn(ctx, fmt.Sprintf("Failed to read dataset UUIDs for deletion: %s", err))
+		return
+	}
+
+	for _, uuid := range uuids {
+		id, err := r.client.GetDatasetIDByUUID(uuid)
+		if err != nil {
+			tflog.Warn(ctx, fmt.Sprintf("Failed to look up dataset UUID %s: %s", uuid, err))
+			continue
+		}
+		if id == 0 {
+			continue
+		}
+		tflog.Info(ctx, fmt.Sprintf("Deleting dataset %d (UUID %s)", id, uuid))
+		if err := r.client.DeleteDataset(id); err != nil {
+			resp.Diagnostics.AddWarning("Failed to delete dataset",
+				fmt.Sprintf("Dataset %d (UUID %s): %s", id, uuid, err))
+		}
+	}
 }
 
 func (r *datasetImportResource) doImport(ctx context.Context, plan *datasetImportResourceModel) error {
