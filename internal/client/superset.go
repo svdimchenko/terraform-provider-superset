@@ -1029,6 +1029,7 @@ func (c *Client) UpdateDataset(id int64, tableName, schema, sql string) error {
 }
 
 // DeleteDataset deletes a dataset by ID.
+// Returns nil if the dataset is already deleted (404).
 func (c *Client) DeleteDataset(id int64) error {
 	csrfToken, cookies, err := c.GetCSRFToken()
 	if err != nil {
@@ -1047,6 +1048,9 @@ func (c *Client) DeleteDataset(id int64) error {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil // already deleted
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("failed to delete dataset, status code: %d, response: %s", resp.StatusCode, string(body))
@@ -1113,7 +1117,58 @@ func (c *Client) GetChartIDByUUID(uuid string) (int64, error) {
 	return int64(result.Result[0].ID), nil
 }
 
+// GetChartDashboardCount returns the number of dashboards referencing a chart.
+func (c *Client) GetChartDashboardCount(chartID int64) (int, error) {
+	endpoint := fmt.Sprintf("/api/v1/chart/%d", chartID)
+	resp, err := c.DoRequest("GET", endpoint, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("failed to get chart %d, status code: %d, response: %s", chartID, resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Result struct {
+			Dashboards []struct {
+				ID int64 `json:"id"`
+			} `json:"dashboards"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+	return len(result.Result.Dashboards), nil
+}
+
+// GetDatasetChartCount returns the number of charts referencing a dataset.
+func (c *Client) GetDatasetChartCount(datasetID int64) (int, error) {
+	endpoint := fmt.Sprintf("/api/v1/chart/?q=(filters:!((col:datasource_id,opr:eq,value:%d)))", datasetID)
+	resp, err := c.DoRequest("GET", endpoint, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("failed to get charts for dataset %d, status code: %d, response: %s", datasetID, resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Count int `json:"count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+	return result.Count, nil
+}
+
 // DeleteChart deletes a chart by ID.
+// Returns nil if the chart is already deleted (404).
 func (c *Client) DeleteChart(id int64) error {
 	csrfToken, cookies, err := c.GetCSRFToken()
 	if err != nil {
@@ -1132,6 +1187,9 @@ func (c *Client) DeleteChart(id int64) error {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil // already deleted
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("failed to delete chart, status code: %d, response: %s", resp.StatusCode, string(body))

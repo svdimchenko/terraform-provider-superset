@@ -207,7 +207,14 @@ func (r *chartImportResource) Delete(ctx context.Context, req resource.DeleteReq
 
 	sourceDir := state.SourceDir.ValueString()
 
-	// Read chart UUIDs from the source directory and delete them from Superset
+	// Find the dashboard ID from this source_dir to know which dashboard we're unlinking from
+	var ownerDashboardID int64
+	dashUUIDs, _ := readUUIDsFromDir(sourceDir, "dashboards/")
+	if len(dashUUIDs) > 0 {
+		ownerDashboardID, _ = r.client.GetDashboardIDByUUID(dashUUIDs[0])
+	}
+
+	// Read chart UUIDs from the source directory
 	uuids, err := readUUIDsFromDir(sourceDir, "charts/")
 	if err != nil {
 		tflog.Warn(ctx, fmt.Sprintf("Failed to read chart UUIDs for deletion: %s", err))
@@ -223,10 +230,36 @@ func (r *chartImportResource) Delete(ctx context.Context, req resource.DeleteReq
 		if id == 0 {
 			continue
 		}
-		tflog.Info(ctx, fmt.Sprintf("Deleting chart %d (UUID %s)", id, uuid))
-		if err := r.client.DeleteChart(id); err != nil {
-			resp.Diagnostics.AddWarning("Failed to delete chart",
-				fmt.Sprintf("Chart %d (UUID %s): %s", id, uuid, err))
+
+		// Check how many dashboards reference this chart
+		dashCount, err := r.client.GetChartDashboardCount(id)
+		if err != nil {
+			tflog.Warn(ctx, fmt.Sprintf("Failed to check chart %d references: %s", id, err))
+			// Can't determine — try to delete anyway
+			dashCount = 0
+		}
+
+		// Always unlink from this resource's dashboard first
+		if ownerDashboardID > 0 && dashCount > 0 {
+			tflog.Info(ctx, fmt.Sprintf("Unlinking chart %d (UUID %s) from dashboard %d", id, uuid, ownerDashboardID))
+			if err := r.client.UnlinkChartsFromDashboard([]int64{id}, ownerDashboardID); err != nil {
+				tflog.Warn(ctx, fmt.Sprintf("Failed to unlink chart %d from dashboard %d: %s", id, ownerDashboardID, err))
+			}
+		}
+
+		// Re-check: if no dashboards reference it now, delete it
+		newDashCount, err := r.client.GetChartDashboardCount(id)
+		if err != nil {
+			newDashCount = 0 // assume safe to delete
+		}
+		if newDashCount == 0 {
+			tflog.Info(ctx, fmt.Sprintf("Deleting chart %d (UUID %s) — no longer referenced", id, uuid))
+			if err := r.client.DeleteChart(id); err != nil {
+				resp.Diagnostics.AddWarning("Failed to delete chart",
+					fmt.Sprintf("Chart %d (UUID %s): %s", id, uuid, err))
+			}
+		} else {
+			tflog.Info(ctx, fmt.Sprintf("Chart %d (UUID %s) still referenced by %d dashboard(s), keeping", id, uuid, newDashCount))
 		}
 	}
 }

@@ -223,6 +223,14 @@ func (r *datasetImportResource) Delete(ctx context.Context, req resource.DeleteR
 		if id == 0 {
 			continue
 		}
+		// Skip deletion if dataset is still used by charts
+		chartCount, err := r.client.GetDatasetChartCount(id)
+		if err != nil {
+			tflog.Warn(ctx, fmt.Sprintf("Failed to check dataset %d references: %s", id, err))
+		} else if chartCount > 0 {
+			tflog.Info(ctx, fmt.Sprintf("Skipping dataset %d (UUID %s) — still referenced by %d chart(s)", id, uuid, chartCount))
+			continue
+		}
 		tflog.Info(ctx, fmt.Sprintf("Deleting dataset %d (UUID %s)", id, uuid))
 		if err := r.client.DeleteDataset(id); err != nil {
 			resp.Diagnostics.AddWarning("Failed to delete dataset",
