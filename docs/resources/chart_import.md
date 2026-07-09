@@ -72,8 +72,3 @@ resource "superset_dashboard_import" "example" {
 
 - `file_hashes` (Map of String) Map of file path to SHA256 hash. Changes trigger re-import.
 - `id` (String) Identifier for this resource (derived from source_dir).
-
-## Behavior
-
-- **Delete**: Removing this resource from config does not delete charts from Superset. Charts are shared dependencies — they may be referenced by multiple dashboards outside this resource's scope, so deleting them would be destructive and unsafe.
-- **Change detection**: The resource tracks SHA256 hashes of all collected files (charts + datasets + databases). Any file change triggers a reimport on the next apply.
