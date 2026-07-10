@@ -27,8 +27,6 @@ resource "superset_chart_import" "example" {
       sqlalchemy_uri = "awsathena+rest://athena.eu-central-1.amazonaws.com/?s3_staging_dir=s3%3A%2F%2Ftest-athena%2Fresults%2Fsuperset&work_group=test"
     })
   }
-
-  depends_on = [superset_dataset_import.example]
 }
 ```
 
