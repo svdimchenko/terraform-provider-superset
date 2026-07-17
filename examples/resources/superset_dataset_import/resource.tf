@@ -11,4 +11,7 @@ resource "superset_dataset_import" "example" {
       sqlalchemy_uri = "postgresql://user:pass@host:5432/mydb"
     })
   }
+
+  # Exclude terragrunt manifest files from hashing to avoid spurious diffs
+  skip_files = [".*terragrunt.*"]
 }

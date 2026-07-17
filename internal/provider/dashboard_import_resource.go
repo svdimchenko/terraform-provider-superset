@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -52,6 +53,7 @@ type dashboardImportResourceModel struct {
 	FileHashes        types.Map    `tfsdk:"file_hashes"`
 	DashboardID       types.Int64  `tfsdk:"dashboard_id"`
 	Roles             types.List   `tfsdk:"roles"`
+	SkipFiles         types.List   `tfsdk:"skip_files"`
 }
 
 func (r *dashboardImportResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -115,6 +117,13 @@ func (r *dashboardImportResource) Schema(_ context.Context, _ resource.SchemaReq
 				Optional:    true,
 				ElementType: types.Int64Type,
 			},
+			"skip_files": schema.ListAttribute{
+				Description: "List of file name patterns (regex) to exclude from hashing and import. " +
+					"Matched against both the file name and relative path. " +
+					"Example: [\".*terragrunt.*\", \"\\\\.terraform\\\\.lock\\\\.hcl\"]",
+				Optional:    true,
+				ElementType: types.StringType,
+			},
 		},
 	}
 }
@@ -149,8 +158,13 @@ func (r *dashboardImportResource) ModifyPlan(ctx context.Context, req resource.M
 	}
 
 	overrides := parseDatabaseOverrides(ctx, plan.DatabaseOverrides)
+	skipFilePatterns := parseSkipFiles(ctx, plan.SkipFiles)
+	skipPatterns := compileSkipPatterns(skipFilePatterns)
+	if len(skipFilePatterns) > 0 {
+		tflog.Debug(ctx, fmt.Sprintf("skip_files patterns configured: %v", skipFilePatterns))
+	}
 
-	newHashes, err := computeFileHashesWithOverrides(sourceDir, overrides)
+	newHashes, err := computeFileHashesWithOverrides(sourceDir, overrides, skipPatterns)
 	if err != nil {
 		resp.Diagnostics.AddWarning("Cannot compute file hashes", err.Error())
 		return
@@ -273,14 +287,19 @@ func (r *dashboardImportResource) importDashboard(ctx context.Context, plan *das
 	plan.ID = types.StringValue(meta.UUID)
 
 	overrides := parseDatabaseOverrides(ctx, plan.DatabaseOverrides)
+	skipFilePatterns := parseSkipFiles(ctx, plan.SkipFiles)
+	skipPatterns := compileSkipPatterns(skipFilePatterns)
+	if len(skipFilePatterns) > 0 {
+		tflog.Info(ctx, fmt.Sprintf("Skipping files matching patterns: %v", skipFilePatterns))
+	}
 
-	fileHashes, err := computeFileHashesWithOverrides(sourceDir, overrides)
+	fileHashes, err := computeFileHashesWithOverrides(sourceDir, overrides, skipPatterns)
 	if err != nil {
 		return fmt.Errorf("computing file hashes: %w", err)
 	}
 	plan.FileHashes = toStringMap(fileHashes)
 
-	zipData, err := zipDirectoryWithOverrides(sourceDir, overrides)
+	zipData, err := zipDirectoryWithOverrides(sourceDir, overrides, skipPatterns)
 	if err != nil {
 		return fmt.Errorf("creating ZIP: %w", err)
 	}
@@ -489,6 +508,18 @@ func parseDatabaseOverrides(ctx context.Context, m types.Map) map[string]map[str
 	return result
 }
 
+// parseSkipFiles extracts a list of skip file patterns from a types.List attribute.
+func parseSkipFiles(ctx context.Context, l types.List) []string {
+	if l.IsNull() || l.IsUnknown() {
+		return nil
+	}
+	var patterns []string
+	if diags := l.ElementsAs(ctx, &patterns, false); diags.HasError() {
+		return nil
+	}
+	return patterns
+}
+
 // deepMerge recursively merges src into dst. Values in src override dst.
 func deepMerge(dst, src map[string]interface{}) map[string]interface{} {
 	for k, srcVal := range src {
@@ -538,7 +569,8 @@ func applyDatabaseOverrides(data []byte, overrides map[string]map[string]interfa
 
 // computeFileHashesWithOverrides computes SHA256 hashes for all files in dir,
 // applying database overrides to databases/*.yaml files before hashing.
-func computeFileHashesWithOverrides(dir string, overrides map[string]map[string]interface{}) (map[string]string, error) {
+// Files matching skipPatterns are excluded.
+func computeFileHashesWithOverrides(dir string, overrides map[string]map[string]interface{}, skipPatterns []*regexp.Regexp) (map[string]string, error) {
 	hashes := make(map[string]string)
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -547,12 +579,12 @@ func computeFileHashesWithOverrides(dir string, overrides map[string]map[string]
 		if d.IsDir() {
 			return nil
 		}
-		// Skip terragrunt manifest files
-		if isTerragruntManifest(d.Name()) {
-			return nil
-		}
 		rel, _ := filepath.Rel(dir, p)
 		rel = filepath.ToSlash(rel)
+		// Skip files matching user-provided patterns
+		if shouldSkipFile(d.Name(), rel, skipPatterns) {
+			return nil
+		}
 		data, err := os.ReadFile(p)
 		if err != nil {
 			return err
@@ -568,7 +600,8 @@ func computeFileHashesWithOverrides(dir string, overrides map[string]map[string]
 }
 
 // zipDirectoryWithOverrides creates a ZIP of sourceDir, applying database overrides to databases/*.yaml.
-func zipDirectoryWithOverrides(sourceDir string, overrides map[string]map[string]interface{}) ([]byte, error) {
+// Files matching skipPatterns are excluded.
+func zipDirectoryWithOverrides(sourceDir string, overrides map[string]map[string]interface{}, skipPatterns []*regexp.Regexp) ([]byte, error) {
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
 	base := filepath.Base(sourceDir)
@@ -586,8 +619,8 @@ func zipDirectoryWithOverrides(sourceDir string, overrides map[string]map[string
 			_, err := w.Create(zipPath + "/")
 			return err
 		}
-		// Skip terragrunt manifest files
-		if isTerragruntManifest(d.Name()) {
+		// Skip files matching user-provided patterns
+		if shouldSkipFile(d.Name(), relSlash, skipPatterns) {
 			return nil
 		}
 		data, err := os.ReadFile(p)
