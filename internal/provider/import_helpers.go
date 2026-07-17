@@ -14,6 +14,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// terragruntExcludedFiles contains filenames that should be excluded from hashing and zipping.
+// Terragrunt generates these manifest files and they differ between local and CI environments,
+// causing spurious re-imports when no actual content has changed.
+var terragruntExcludedFiles = map[string]bool{
+	".terragrunt-source-manifest": true,
+	".terragrunt-module-manifest": true,
+}
+
+// isTerragruntManifest returns true if the file should be excluded from hashing/zipping.
+func isTerragruntManifest(name string) bool {
+	return terragruntExcludedFiles[name]
+}
+
 // zipDirectoryFiltered creates a ZIP of sourceDir including only the specified subdirectory prefixes.
 // It generates a metadata.yaml with the given type and current timestamp.
 // Database overrides are applied to databases/*.yaml files.
@@ -39,6 +52,11 @@ func zipDirectoryFiltered(sourceDir string, overrides map[string]map[string]inte
 
 		// Skip root and metadata.yaml (we generate our own)
 		if relSlash == "." || relSlash == "metadata.yaml" {
+			return nil
+		}
+
+		// Skip terragrunt manifest files
+		if !d.IsDir() && isTerragruntManifest(d.Name()) {
 			return nil
 		}
 
@@ -112,6 +130,12 @@ func computeFilteredFileHashes(sourceDir string, prefixes []string, overrides ma
 		if d.IsDir() {
 			return nil
 		}
+
+		// Skip terragrunt manifest files
+		if isTerragruntManifest(d.Name()) {
+			return nil
+		}
+
 		rel, _ := filepath.Rel(sourceDir, p)
 		relSlash := filepath.ToSlash(rel)
 

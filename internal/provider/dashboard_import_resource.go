@@ -547,6 +547,10 @@ func computeFileHashesWithOverrides(dir string, overrides map[string]map[string]
 		if d.IsDir() {
 			return nil
 		}
+		// Skip terragrunt manifest files
+		if isTerragruntManifest(d.Name()) {
+			return nil
+		}
 		rel, _ := filepath.Rel(dir, p)
 		rel = filepath.ToSlash(rel)
 		data, err := os.ReadFile(p)
@@ -581,6 +585,10 @@ func zipDirectoryWithOverrides(sourceDir string, overrides map[string]map[string
 		if d.IsDir() {
 			_, err := w.Create(zipPath + "/")
 			return err
+		}
+		// Skip terragrunt manifest files
+		if isTerragruntManifest(d.Name()) {
+			return nil
 		}
 		data, err := os.ReadFile(p)
 		if err != nil {
