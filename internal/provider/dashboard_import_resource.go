@@ -118,9 +118,8 @@ func (r *dashboardImportResource) Schema(_ context.Context, _ resource.SchemaReq
 				ElementType: types.Int64Type,
 			},
 			"skip_files": schema.ListAttribute{
-				Description: "List of file name patterns (regex) to exclude from hashing and import. " +
-					"Matched against both the file name and relative path. " +
-					"Example: [\".*terragrunt.*\", \"\\\\.terraform\\\\.lock\\\\.hcl\"]",
+				Description: "List of regex patterns to exclude files from hashing and import. " +
+					"Matched against both the file name and relative path.",
 				Optional:    true,
 				ElementType: types.StringType,
 			},

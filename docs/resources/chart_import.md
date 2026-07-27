@@ -27,8 +27,8 @@ resource "superset_chart_import" "example" {
     })
   }
 
-  # Exclude terragrunt manifest files from hashing to avoid spurious diffs
-  skip_files = [".*terragrunt.*"]
+  # Exclude files from hashing to avoid spurious diffs
+  skip_files = [".*terragrunt.*", "\\.terraform\\.lock\\.hcl"]
 }
 ```
 
@@ -44,7 +44,7 @@ resource "superset_chart_import" "example" {
 - `database_overrides` (Map of String) Map of database UUID to a JSON-encoded object of YAML field overrides.
 - `database_secrets` (Map of String, Sensitive) Map of database UUID to database password/secret.
 - `force_overwrite` (Boolean) Whether to overwrite existing charts on import. Defaults to true.
-- `skip_files` (List of String) List of file name patterns (regex) to exclude from hashing and import. Matched against both the file name and relative path. Example: [".*terragrunt.*", "\\.terraform\\.lock\\.hcl"]
+- `skip_files` (List of String) List of regex patterns to exclude files from hashing and import. Matched against both the file name and relative path.
 
 ### Read-Only
 

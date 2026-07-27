@@ -12,6 +12,6 @@ resource "superset_dataset_import" "example" {
     })
   }
 
-  # Exclude terragrunt manifest files from hashing to avoid spurious diffs
-  skip_files = [".*terragrunt.*"]
+  # Exclude files from hashing to avoid spurious diffs
+  skip_files = [".*terragrunt.*", "\\.terraform\\.lock\\.hcl"]
 }
