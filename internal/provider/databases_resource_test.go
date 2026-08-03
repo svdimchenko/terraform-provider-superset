@@ -325,7 +325,7 @@ func TestAccDatabaseResourceOptionalFields(t *testing.T) {
 				"expose_in_sqllab": false,
 				"extra": "{}",
 				"impersonate_user": false,
-				"server_cert": "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----",
+				"server_cert": "fake-ca-cert-for-testing",
 				"parameters": {
 					"database": "mydb",
 					"host": "pg.example.com",
@@ -351,7 +351,7 @@ func TestAccDatabaseResourceOptionalFields(t *testing.T) {
 					// masked_encrypted_extra is sensitive/write-only, kept from plan
 					resource.TestCheckResourceAttr("superset_database.optional_test", "masked_encrypted_extra", `{"project_id": "my-gcp-project"}`),
 					// server_cert is read back from API response
-					resource.TestCheckResourceAttr("superset_database.optional_test", "server_cert", "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----"),
+					resource.TestCheckResourceAttr("superset_database.optional_test", "server_cert", "fake-ca-cert-for-testing"),
 				),
 			},
 		},
@@ -421,7 +421,7 @@ func TestAccDatabaseResourceSSHTunnel(t *testing.T) {
 					resource.TestCheckResourceAttr("superset_database.ssh_test", "ssh_tunnel.server_address", "bastion.example.com"),
 					resource.TestCheckResourceAttr("superset_database.ssh_test", "ssh_tunnel.server_port", "22"),
 					resource.TestCheckResourceAttr("superset_database.ssh_test", "ssh_tunnel.username", "tunnel_user"),
-					resource.TestCheckResourceAttr("superset_database.ssh_test", "ssh_tunnel.private_key", "-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----"),
+					resource.TestCheckResourceAttr("superset_database.ssh_test", "ssh_tunnel.private_key", "fake-private-key-for-testing"),
 				),
 			},
 		},
@@ -575,7 +575,7 @@ resource "superset_database" "optional_test" {
   expose_in_sqllab      = false
   force_ctas_schema     = "public"
   masked_encrypted_extra = "{\"project_id\": \"my-gcp-project\"}"
-  server_cert           = "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----"
+  server_cert           = "fake-ca-cert-for-testing"
 }
 `
 
@@ -598,7 +598,7 @@ resource "superset_database" "ssh_test" {
     server_address = "bastion.example.com"
     server_port    = 22
     username       = "tunnel_user"
-    private_key    = "-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----"
+    private_key    = "fake-private-key-for-testing"
   }
 }
 `
