@@ -277,12 +277,12 @@ func (c *Client) DeleteCSSTemplate(id int) error {
 	return nil
 }
 
-// FindCSSTemplateByName finds a CSS template by exact name match.
-// GET /api/v1/css_template/?q=(filters:!((col:template_name,opr:eq,value:'{name}')),page:{page},page_size:100)
-// Paginates through all pages until found or exhausted.
-func (c *Client) FindCSSTemplateByName(name string) (*CSSTemplate, error) {
+// FindCSSTemplatesByName finds all CSS templates matching the exact name.
+// Returns a slice of all matching templates (may be 0, 1, or multiple).
+func (c *Client) FindCSSTemplatesByName(name string) ([]CSSTemplate, error) {
 	page := 0
 	pageSize := 100
+	var matches []CSSTemplate
 
 	for {
 		q := fmt.Sprintf("(filters:!((col:template_name,opr:eq,value:'%s')),page:%d,page_size:%d)", name, page, pageSize)
@@ -326,11 +326,11 @@ func (c *Client) FindCSSTemplateByName(name string) (*CSSTemplate, error) {
 
 		for _, tmpl := range result.Result {
 			if tmpl.TemplateName == name {
-				return &CSSTemplate{
+				matches = append(matches, CSSTemplate{
 					ID:           tmpl.ID,
 					TemplateName: tmpl.TemplateName,
 					CSS:          tmpl.CSS,
-				}, nil
+				})
 			}
 		}
 
@@ -340,5 +340,24 @@ func (c *Client) FindCSSTemplateByName(name string) (*CSSTemplate, error) {
 		page++
 	}
 
-	return nil, fmt.Errorf("CSS template with name %q not found", name)
+	return matches, nil
+}
+
+// FindCSSTemplateByName finds a single CSS template by exact name match.
+// Returns an error if no match is found or if multiple matches exist (ambiguous).
+func (c *Client) FindCSSTemplateByName(name string) (*CSSTemplate, error) {
+	matches, err := c.FindCSSTemplatesByName(name)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("CSS template with name %q not found", name)
+	}
+
+	if len(matches) > 1 {
+		return nil, fmt.Errorf("multiple CSS templates found with name %q (%d matches), result is ambiguous", name, len(matches))
+	}
+
+	return &matches[0], nil
 }

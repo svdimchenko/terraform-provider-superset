@@ -171,6 +171,23 @@ func (r *cssTemplateResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
+	// Check for existing templates with the same name
+	existing, err := r.client.FindCSSTemplatesByName(plan.TemplateName.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Check CSS Template Uniqueness",
+			fmt.Sprintf("Failed to check for existing CSS templates: %s", err.Error()),
+		)
+		return
+	}
+	if len(existing) > 0 {
+		resp.Diagnostics.AddError(
+			"CSS Template Name Already Exists",
+			fmt.Sprintf("A CSS template with name %q already exists (ID: %d). Template names must be unique.", plan.TemplateName.ValueString(), existing[0].ID),
+		)
+		return
+	}
+
 	tmpl, err := r.client.CreateCSSTemplate(plan.TemplateName.ValueString(), plan.CSS.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
