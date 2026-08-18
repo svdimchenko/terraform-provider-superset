@@ -24,7 +24,7 @@ func truncateBody(body string, maxLen int) string {
 }
 
 // CreateCSSTemplate creates a new CSS template in Superset.
-// POST /api/v1/css_template/ with {"template_name": "...", "css": "..."}
+// POST /api/v1/css_template/ with {"template_name": "...", "css": "..."}.
 func (c *Client) CreateCSSTemplate(templateName, css string) (*CSSTemplate, error) {
 	endpoint := "/api/v1/css_template/"
 	payload := map[string]string{
@@ -92,7 +92,7 @@ func (c *Client) CreateCSSTemplate(templateName, css string) (*CSSTemplate, erro
 		CSS:          result.Result.CSS,
 	}
 
-	// If the result block doesn't have an ID, use the top-level id
+	// If the result block doesn't have an ID, use the top-level id.
 	if tmpl.ID == 0 {
 		tmpl.ID = result.ID
 	}
@@ -101,7 +101,7 @@ func (c *Client) CreateCSSTemplate(templateName, css string) (*CSSTemplate, erro
 }
 
 // GetCSSTemplate retrieves a CSS template by its ID.
-// GET /api/v1/css_template/{id}
+// GET /api/v1/css_template/{id}.
 func (c *Client) GetCSSTemplate(id int) (*CSSTemplate, error) {
 	endpoint := fmt.Sprintf("/api/v1/css_template/%d", id)
 
@@ -264,7 +264,7 @@ func (c *Client) DeleteCSSTemplate(id int) error {
 		defer resp.Body.Close()
 	}
 
-	// 404 is treated as success (resource already gone)
+	// 404 is treated as success (resource already gone).
 	if resp.StatusCode == http.StatusNotFound {
 		return nil
 	}
