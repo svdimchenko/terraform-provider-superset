@@ -1,5 +1,7 @@
 # Terraform Provider Apache Superset
 
+Arhived & moved to https://github.com/gr8-toolkit/terraform-provider-superset
+
 - A resource and a data source (`internal/provider/`),
 - Examples (`examples/`) and generated documentation (`docs/`),
 - Miscellaneous meta files.
